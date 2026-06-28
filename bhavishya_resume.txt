@@ -1,0 +1,15 @@
+
+Bhavishya Gupta
+Software Engineer
+
+Experience:
+- Intern at Google. Worked on RAG systems and LLM integrations.
+- Software Developer at TechCorp.
+
+Skills:
+Languages: JavaScript, TypeScript, Python, C++, Java, Rust
+Frameworks: React.js, Node.js, Express.js, Next.js, TailwindCSS
+Databases: MongoDB, PostgreSQL, Redis, MySQL
+Cloud Platforms: AWS, GCP, Vercel
+Core Skills: Data Structures & Algorithms (DSA) with over 740 problems solved, Object-Oriented Programming (OOP), Software Development Life Cycle (SDLC), Operating Systems, Database Management Systems (DBMS), Computer Networks, Debugging
+Tools: Git, Docker, Kubernetes, Webpack

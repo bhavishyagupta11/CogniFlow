@@ -1,0 +1,63 @@
+Bhavishya Gupta 
++91-7339743084 | bhavishyagupta001@gmail.com | LinkedIn | GitHub | Portfolio | Jaipur, Rajasthan 
+ 
+PROFESSIONAL SUMMARY 
+Computer Science undergraduate (AI & ML) skilled in full-stack development (C++, Java, Python, JavaScript, Node.js, React, MongoDB) 
+across the SDLC, with strong DSA/OOP fundamentals (740+ problems solved), REST API design, Git/GitHub version control, and GCP 
+cloud platforms. Writes clean, scalable code, participates in code reviews, and collaborates cross-functionally to meet project milestones 
+ 
+EDUCATION 
+B.Tech in Computer Science (AI & ML) | JECRC University, Jaipur | CGPA: 9.23 2023 – 2027 
+Senior Secondary School, SKSS Sec. School | Percentage: 77.20                             2022 
+Secondary School, LPS | Percentage: 95.67                                                                                                                                                         2020 
+SKILLS 
+Languages:  C++, Java, Python, JavaScript 
+Frameworks:  React.js, Node.js, Express.js 
+Databases: MySQL, MongoDB, NoSQL 
+Cloud Platforms: Google Cloud Platform (Firebase, Firestore) 
+Tools & DevOps: Git, GitHub, VS Code, Windows, Linux 
+Core Skills: Data Structures & Algorithms, OOP, SDLC, Operating Systems, DBMS, Computer Networks, Debugging 
+Soft Skills: Communication, Leadership, Teamwork, Adaptability, Continuous Learning 
+ 
+WORK EXPERIENCE 
+Data Analyst Intern | Samatrix Consulting Private Limited | LINK Jun 2025 – Jul 2025 
+• Debugged and validated data pipelines, applying statistical techniques to identify root causes of inconsistencies across 5K+ records 
+and generate actionable insights for data-driven decision-making. 
+• Built KPI dashboards to visualize key metrics, reducing manual analysis effort by ~30%. 
+• Delivered multiple analysis reports within a 4-week internship under strict timelines. 
+ 
+PROJECTS 
+ScholrBoard - Student Performance & Placement Platform | WEBSITE Nov 2025 – Jun 2026 
+Tech Stack: React.js, Node.js, Express.js, MongoDB Atlas, JWT, Cloudinary, Nodemailer, REST APIs 
+• Architected a full-stack MERN platform with 4 hierarchical roles, 4 personalized dashboards, and 40+ secured REST API endpoints 
+supporting authentication, RBAC, document management, analytics, and recruiter-facing talent discovery. 
+• Engineered  a  6-pipeline  approval  ecosystem  and  6-workflow  document  management  system  handling  resumes,  certificates,  OD 
+requests, and activity proofs, with 5 automated escalation paths, role-aware audit tracking, and Cloudinary-linked secure storage. 
+• Integrated 4 external services and a track-personalization engine auto-mapping 100% of student records into 2 engineering tracks 
+with zero downtime, while hardening security via JWT, XSS sanitization, NoSQL injection protection, and RBAC middleware validated 
+in production. 
+ 
+FutureMedia - A Social Media Platform | GITHUB Jan 2026 – Present 
+Tech Stack: MERN, Redis, BullMQ, Socket.io, Docker, JWT, Cloudinary 
+• Architected a hybrid full-stack social media platform (React, Node.js, Express.js, MongoDB, Redis, BullMQ, Socket.io, AI microservice) 
+with ~35 – 45 REST API endpoints and 6 relational MongoDB collections. 
+• Containerized 5 services via Docker Compose, implemented Redis-backed BullMQ for async processing, and enabled real-time 
+messaging via Socket.io; secured the app with 6+ layers including JWT, RBAC, Helmet, and rate limiting. 
+• Built a React SPA with 8 pages and 9+ reusable components using TanStack Query caching; integrated Cloudinary + Multer for 
+media uploads (10 files/request); and set up CI/CD with GitHub Actions and Jest for automated testing. 
+ CERTIFICATION         All Certificates 
+• ServiceNow, Jaipur (Virtual): 
+Certified System Administrator (CSA) Jun 2026 
+Certified Application Developer (CAD) Jun 2026 
+• Google Cloud Computing Foundation, Jaipur (Virtual) | LINK Mar 2025 
+• Foundation of AI & Data Science, Probability Modelling & Statistics, Deep Learning, Neural Networks                                    
+  
+ACHIEVEMENTS & EXTRACURRICULAR ACTIVITIES 
+• Solved 740+ DSA problems across LeetCode (530+, Max Rating: 1779), GeeksforGeeks (120+), Code360 (70+, Max Rating: 1506), 
+and 20+ on other competitive programming platforms. 
+• Winner – CodeHunt (JECRC University) | Ranked 1st among 25 teams in a three-stage coding & logic competition. 
+• Finalist – CodeAThon 1.0 (JECRC University) | Advanced to the top 25 of 500 participants across 2 rounds, finishing in the top 10 
+by solving 2 medium-level DSA problems in the final round. 
+• Selected for McKinsey & Company Forward Program | LINK 
+• MyGov India Campus Ambassador | JECRC University – Organized 5+ campus engagement events, promoting government 
+initiatives and reaching 2,500+ students through awareness sessions and student outreach.

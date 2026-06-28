@@ -1,0 +1,242 @@
+{
+  "question": "Explain the experience of Bhavishya Gupta",
+  "answer": "Bhavishya Gupta is a Computer Science undergraduate specializing in AI & ML, with skills in full-stack development. Gupta is proficient in programming languages such as C++, Java, Python, JavaScript, Node.js, and React, and has experience with MongoDB. Gupta's expertise spans the Software Development Life Cycle (SDLC), including strong fundamentals in Data Structures and Algorithms (DSA) and Object-Oriented Programming (OOP), having solved over 740 problems [1].\n\nGupta's technical toolkit includes frameworks like React.js, Node.js, and Express.js, and databases such as MySQL, MongoDB, and NoSQL. Gupta also has experience with Google Cloud Platform (GCP), specifically Firebase and Firestore. Other tools and DevOps skills include Git, GitHub, VS Code, Windows, and Linux. Core skills encompass Data Structures & Algorithms, OOP, SDLC, Operating Systems, DBMS, Computer Networks, and Debugging. Gupta also possesses soft skills such as communication, leadership, teamwork, adaptability, and continuous learning [2].\n\nGupta has work experience as a Data Analyst Intern at Samatrix Consulting Private Limited from June 2025 to July 2025 [2].",
+  "sources": [
+    {
+      "chunkId": "a7f984b2-4104-47d7-90ee-5d00837d862d#chunk-2",
+      "documentId": "a7f984b2-4104-47d7-90ee-5d00837d862d",
+      "documentTitle": "Bhavishya Gupta Resume Analysed.pdf",
+      "authors": "Unknown",
+      "year": 0,
+      "source": "",
+      "chunkIndex": 2,
+      "chunkContent": "Bhavishya Gupta Resume Analysed.pdf\n\nBhavishya Gupta \n+91-7339743084 | bhavishyagupta001@gmail.com | LinkedIn | GitHub | Portfolio | Jaipur, Rajasthan \n \nPROFESSIONAL SUMMARY \nComputer Science undergraduate (AI & ML) skilled in full-stack development (C++, Java, Python, JavaScript, Node.js, React, MongoDB) \nacross the SDLC, with strong DSA/OOP fundamentals (740+ problems solved), REST API design, Git/GitHub version control, and GCP \ncloud platforms. Writes clean, scalable code, participates in code reviews, and collaborates cross-functionally to meet project milestones \n \nEDUCATION",
+      "score": 0,
+      "llmScore": 9
+    },
+    {
+      "chunkId": "a7f984b2-4104-47d7-90ee-5d00837d862d#chunk-4",
+      "documentId": "a7f984b2-4104-47d7-90ee-5d00837d862d",
+      "documentTitle": "Bhavishya Gupta Resume Analysed.pdf",
+      "authors": "Unknown",
+      "year": 0,
+      "source": "",
+      "chunkIndex": 4,
+      "chunkContent": "Frameworks:  React.js, Node.js, Express.js \nDatabases: MySQL, MongoDB, NoSQL \nCloud Platforms: Google Cloud Platform (Firebase, Firestore) \nTools & DevOps: Git, GitHub, VS Code, Windows, Linux \nCore Skills: Data Structures & Algorithms, OOP, SDLC, Operating Systems, DBMS, Computer Networks, Debugging \nSoft Skills: Communication, Leadership, Teamwork, Adaptability, Continuous Learning \n \nWORK EXPERIENCE \nData Analyst Intern | Samatrix Consulting Private Limited | LINK Jun 2025 – Jul 2025",
+      "score": 0,
+      "llmScore": 8
+    },
+    {
+      "chunkId": "a7f984b2-4104-47d7-90ee-5d00837d862d#chunk-1",
+      "documentId": "a7f984b2-4104-47d7-90ee-5d00837d862d",
+      "documentTitle": "Bhavishya Gupta Resume Analysed.pdf",
+      "authors": "Unknown",
+      "year": 0,
+      "source": "",
+      "chunkIndex": 1,
+      "chunkContent": "Bhavishya Gupta Resume Analysed.pdf",
+      "score": 0,
+      "llmScore": 1
+    },
+    {
+      "chunkId": "doc-attention-2017#chunk-1",
+      "documentId": "doc-attention-2017",
+      "documentTitle": "Attention Is All You Need",
+      "authors": "Vaswani et al.",
+      "year": 2017,
+      "source": "NeurIPS 2017",
+      "chunkIndex": 1,
+      "chunkContent": "Attention Is All You Need\n\n# Attention Is All You Need\n\nThe dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a decoder. The best performing models also connect the encoder and decoder through an attention mechanism.",
+      "score": 0,
+      "llmScore": 0
+    }
+  ],
+  "steps": [
+    {
+      "id": "router-1782595958839-1",
+      "agent": "router",
+      "label": "Analyzing question & rewriting query",
+      "startedAt": 1782595958839,
+      "finishedAt": 1782595960664,
+      "durationMs": 1825,
+      "status": "completed",
+      "input": {
+        "question": "Explain the experience of Bhavishya Gupta"
+      },
+      "output": {
+        "queryType": "factual",
+        "rewrittenQuery": "Bhavishya Gupta experience",
+        "intentSummary": "The user is asking for information about Bhavishya Gupta's professional experience.",
+        "needsRetrieval": true
+      }
+    },
+    {
+      "id": "retriever-1782595960664-2",
+      "agent": "retriever",
+      "label": "Retrieving top-5 chunks (TF-IDF + MMR)",
+      "startedAt": 1782595960664,
+      "finishedAt": 1782595960714,
+      "durationMs": 50,
+      "status": "completed",
+      "input": {
+        "query": "Bhavishya Gupta experience",
+        "k": 5
+      },
+      "output": {
+        "candidates": [
+          {
+            "chunkId": "a7f984b2-4104-47d7-90ee-5d00837d862d#chunk-1",
+            "documentTitle": "Bhavishya Gupta Resume Analysed.pdf",
+            "score": 0.5147,
+            "preview": "Bhavishya Gupta Resume Analysed.pdf"
+          },
+          {
+            "chunkId": "a7f984b2-4104-47d7-90ee-5d00837d862d#chunk-2",
+            "documentTitle": "Bhavishya Gupta Resume Analysed.pdf",
+            "score": 0.2645,
+            "preview": "Bhavishya Gupta Resume Analysed.pdf Bhavishya Gupta +91-7339743084 | bhavishyagupta001@gmail.com | LinkedIn | GitHub | Portfolio | Jaipur, Rajasthan PROFES…"
+          },
+          {
+            "chunkId": "doc-attention-2017#chunk-1",
+            "documentTitle": "Attention Is All You Need",
+            "score": 0,
+            "preview": "Attention Is All You Need # Attention Is All You Need The dominant sequence transduction models are based on complex recurrent or convolutional neural network…"
+          },
+          {
+            "chunkId": "doc-bert-2019#chunk-2",
+            "documentTitle": "BERT: Pre-training of Deep Bidirectional Transformers",
+            "score": 0,
+            "preview": "ditioning on both left and right context in all layers. ## Pre-training Tasks BERT addresses two key pre-training tasks: Masked Language Model (MLM) and Next…"
+          },
+          {
+            "chunkId": "a7f984b2-4104-47d7-90ee-5d00837d862d#chunk-4",
+            "documentTitle": "Bhavishya Gupta Resume Analysed.pdf",
+            "score": 0.0725,
+            "preview": "Frameworks: React.js, Node.js, Express.js Databases: MySQL, MongoDB, NoSQL Cloud Platforms: Google Cloud Platform (Firebase, Firestore) Tools & DevOps: Git,…"
+          }
+        ],
+        "stats": {
+          "vocabSize": 1191,
+          "numChunks": 45522
+        }
+      }
+    },
+    {
+      "id": "reranker-1782595960714-3",
+      "agent": "reranker",
+      "label": "Reranking candidates (LLM cross-encoder)",
+      "startedAt": 1782595960714,
+      "finishedAt": 1782595963117,
+      "durationMs": 2403,
+      "status": "completed",
+      "input": {
+        "query": "Bhavishya Gupta experience",
+        "numCandidates": 5
+      },
+      "output": {
+        "reranked": [
+          {
+            "chunkId": "a7f984b2-4104-47d7-90ee-5d00837d862d#chunk-2",
+            "documentTitle": "Bhavishya Gupta Resume Analysed.pdf",
+            "originalRank": 4,
+            "newRank": 1,
+            "llmScore": 9,
+            "rationale": "This chunk provides a professional summary of Bhavishya Gupta, detailing their skills and areas of expertise, which directly addresses the query about their experience."
+          },
+          {
+            "chunkId": "a7f984b2-4104-47d7-90ee-5d00837d862d#chunk-4",
+            "documentTitle": "Bhavishya Gupta Resume Analysed.pdf",
+            "originalRank": 5,
+            "newRank": 2,
+            "llmScore": 8,
+            "rationale": "This chunk lists Bhavishya Gupta's technical skills, frameworks, databases, and soft skills, which are all components of their professional experience."
+          },
+          {
+            "chunkId": "a7f984b2-4104-47d7-90ee-5d00837d862d#chunk-1",
+            "documentTitle": "Bhavishya Gupta Resume Analysed.pdf",
+            "originalRank": 3,
+            "newRank": 3,
+            "llmScore": 1,
+            "rationale": "This chunk only states the document title, which contains the name 'Bhavishya Gupta' but provides no information about their experience."
+          },
+          {
+            "chunkId": "doc-attention-2017#chunk-1",
+            "documentTitle": "Attention Is All You Need",
+            "originalRank": 1,
+            "newRank": 4,
+            "llmScore": 0,
+            "rationale": "This chunk discusses neural networks and attention mechanisms, which are not related to Bhavishya Gupta's experience."
+          },
+          {
+            "chunkId": "doc-bert-2019#chunk-2",
+            "documentTitle": "BERT: Pre-training of Deep Bidirectional Transformers",
+            "originalRank": 2,
+            "newRank": 5,
+            "llmScore": 0,
+            "rationale": "This chunk describes BERT pre-training tasks, which are irrelevant to Bhavishya Gupta's experience."
+          }
+        ]
+      }
+    },
+    {
+      "id": "analyzer-1782595963122-4",
+      "agent": "analyzer",
+      "label": "Synthesizing grounded answer",
+      "startedAt": 1782595963122,
+      "finishedAt": 1782595966333,
+      "durationMs": 3211,
+      "status": "completed",
+      "input": {
+        "query": "Explain the experience of Bhavishya Gupta",
+        "numSources": 4,
+        "iteration": 1
+      },
+      "output": {
+        "answer": "Bhavishya Gupta is a Computer Science undergraduate specializing in AI & ML, with skills in full-stack development. Gupta is proficient in programming languages such as C++, Java, Python, JavaScript, Node.js, and React, and has experience with MongoDB. Gupta's expertise spans the Software Development Life Cycle (SDLC), including strong fundamentals in Data Structures and Algorithms (DSA) and Object-Oriented Programming (OOP), having solved over 740 problems [1].\n\nGupta's technical toolkit includes frameworks like React.js, Node.js, and Express.js, and databases such as MySQL, MongoDB, and NoSQL. Gupta also has experience with Google Cloud Platform (GCP), specifically Firebase and Firestore. Other tools and DevOps skills include Git, GitHub, VS Code, Windows, and Linux. Core skills encompass Data Structures & Algorithms, OOP, SDLC, Operating Systems, DBMS, Computer Networks, and Debugging. Gupta also possesses soft skills such as communication, leadership, teamwork, adaptability, and continuous learning [2].\n\nGupta has work experience as a Data Analyst Intern at Samatrix Consulting Private Limited from June 2025 to July 2025 [2].",
+        "citationsUsed": 2
+      }
+    },
+    {
+      "id": "critic-1782595966334-5",
+      "agent": "critic",
+      "label": "Validating answer against sources",
+      "startedAt": 1782595966334,
+      "finishedAt": 1782595967179,
+      "durationMs": 845,
+      "status": "completed",
+      "input": {
+        "answerLength": 1146,
+        "numSources": 4
+      },
+      "output": {
+        "verdict": "faithful",
+        "faithfulnessScore": 100,
+        "issues": []
+      }
+    },
+    {
+      "id": "coordinator-1782595967179-6",
+      "agent": "coordinator",
+      "label": "Pipeline complete",
+      "startedAt": 1782595958839,
+      "finishedAt": 1782595967179,
+      "durationMs": 8340,
+      "status": "completed",
+      "input": {
+        "question": "Explain the experience of Bhavishya Gupta"
+      },
+      "output": {
+        "flow": [
+          "router",
+          "retriever",
+          "reranker",
+          "analyzer",
+          "critic"
+        ],
+        "totalIterations": 1,
+        "finalVerdict": "faithful"
+      }
+    }
+  ],
+  "totalDurationMs": 8340
+}
