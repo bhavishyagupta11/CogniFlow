@@ -23,7 +23,7 @@ export async function runRetrieverAgent(
   let status: RetrieverStep["status"] = "running";
   let error: string | undefined;
 
-  const store = getVectorStore();
+  const store = await getVectorStore();
   const stats = store.getStats();
 
   let output: RetrieverStep["output"];
