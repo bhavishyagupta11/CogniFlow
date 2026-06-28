@@ -27,6 +27,7 @@ Rules:
 - If asked for a procedure, structure the answer as numbered steps.
 - Keep the answer focused and concise (3-6 short paragraphs max).
 - If you receive "Revision notes" from a Critic agent, address each note explicitly when rewriting.
+- Format ALL mathematical variables, formulas, and expressions using LaTeX delimiters ($...$ for inline, $$...$$ for block). Always use proper LaTeX brace syntax for multi-character subscripts (e.g. $d_{model}$ instead of $d_model$, $d_k$ instead of d_k).
 
 CONTENT FORMATTING GUIDELINES:
 - For narrative/research paper content (claims, findings, methodologies): Write in natural prose paragraphs or standard bullet points.
