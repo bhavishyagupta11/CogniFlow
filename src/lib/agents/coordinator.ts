@@ -175,14 +175,15 @@ export async function runMultiAgentPipeline(
   }
 
   // ─── 5. Coordinator summary ─────────────────────────────────────────
+  const hasErrors = steps.some((s) => s.status === "error");
   const coordinatorStep: CoordinatorStep = {
     id: nextId("coordinator"),
     agent: "coordinator",
-    label: "Pipeline complete",
+    label: hasErrors ? "Pipeline completed with errors" : "Pipeline complete",
     startedAt: runStart,
     finishedAt: Date.now(),
     durationMs: Date.now() - runStart,
-    status: "completed",
+    status: hasErrors ? "error" : "completed",
     input: { question },
     output: {
       flow: ["router", "retriever", "reranker", "analyzer", "critic"],
