@@ -60,7 +60,7 @@ export async function runRerankerAgent(
   let status: RerankerStep["status"] = "running";
   let error: string | undefined;
 
-  const store = getVectorStore();
+  const store = await getVectorStore();
   const allChunks = store.getChunks();
   const candidateChunks = allChunks.filter((c) =>
     candidateChunkIds.includes(c.id),
