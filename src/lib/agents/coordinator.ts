@@ -129,7 +129,7 @@ export async function runMultiAgentPipeline(
     .slice(0, TOP_N)
     .map((r) => r.chunkId);
 
-  const store = getVectorStore();
+  const store = await getVectorStore();
   const allChunks = store.getChunks();
   const finalChunks: Chunk[] = finalChunkIds
     .map((id) => allChunks.find((c) => c.id === id))
