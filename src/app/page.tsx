@@ -12,6 +12,10 @@ import { ArchitectureDialog } from "@/components/rag/architecture-dialog";
 import { KnowledgeBaseDialog } from "@/components/rag/knowledge-base-dialog";
 import { AgentRunResult } from "@/lib/agents/types";
 import { KNOWLEDGE_BASE } from "@/lib/rag/documents";
+import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import { toast } from "sonner";
 import {
   Send,
@@ -399,7 +403,12 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           }`}
         >
           <div className="text-sm leading-relaxed whitespace-pre-wrap">
-            {message.content}
+            <ReactMarkdown
+              remarkPlugins={[remarkMath]}
+              rehypePlugins={[rehypeKatex]}
+            >
+              {message.content}
+            </ReactMarkdown>
           </div>
         </div>
         {!isUser && message.sources && message.sources.length > 0 && (

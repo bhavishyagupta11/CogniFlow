@@ -5,6 +5,10 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { FileText, Quote } from "lucide-react";
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 
 export function SourcesPanel({ sources }: { sources: CitedSource[] }) {
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -49,13 +53,18 @@ export function SourcesPanel({ sources }: { sources: CitedSource[] }) {
                 <div className="text-[10px] text-muted-foreground">
                   {s.authors} · {s.year} · {s.source}
                 </div>
-                <p
-                  className={`text-[11px] text-muted-foreground leading-relaxed ${
+                <div
+                  className={`text-[11px] text-muted-foreground leading-relaxed prose prose-sm prose-p:my-0 prose-p:leading-relaxed prose-headings:my-1 max-w-none ${
                     isOpen ? "" : "line-clamp-3"
                   }`}
                 >
-                  {s.chunkContent}
-                </p>
+                  <ReactMarkdown
+                    remarkPlugins={[remarkMath]}
+                    rehypePlugins={[rehypeKatex]}
+                  >
+                    {s.chunkContent}
+                  </ReactMarkdown>
+                </div>
                 <div className="text-[10px] text-muted-foreground/70 pt-1 border-t">
                   {isOpen ? "Click to collapse" : "Click to expand full chunk"} · chunk #
                   {s.chunkIndex}
