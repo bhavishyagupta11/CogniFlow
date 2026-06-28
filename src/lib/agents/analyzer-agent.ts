@@ -100,6 +100,7 @@ Now synthesize a grounded answer. Cite sources as [1], [2], etc.`;
 
     status = "completed";
   } catch (e: any) {
+    console.error("[Analyzer Agent] Fatal error during synthesis:", e);
     answer =
       "I'm sorry, I encountered an error while synthesizing the answer. Please try again.";
     status = "error";

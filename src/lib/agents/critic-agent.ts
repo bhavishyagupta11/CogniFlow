@@ -51,7 +51,8 @@ Rules:
 - faithfulnessScore < 85 OR any hallucination found → verdict = "needs_revision"
 - revisionNotes should give the Analyzer concrete instructions on what to fix
 - DO NOT include markdown code fences, just emit raw JSON
-- Be strict but fair — don't fail for stylistic choices, only for factual problems`;
+- Be strict but fair — don't fail for stylistic choices, only for factual problems
+- Ignore LaTeX formatting differences (e.g., $d_{model}$ vs d_model). The Analyzer is explicitly instructed to format math this way, this is NOT a hallucination.`;
 
 interface CriticArgs {
   question: string;
