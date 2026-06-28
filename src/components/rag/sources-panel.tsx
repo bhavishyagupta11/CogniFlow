@@ -8,7 +8,6 @@ import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import "katex/dist/katex.min.css";
 
 export function SourcesPanel({ sources }: { sources: CitedSource[] }) {
   const [expanded, setExpanded] = useState<string | null>(null);
