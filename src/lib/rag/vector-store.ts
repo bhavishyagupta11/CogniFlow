@@ -152,13 +152,76 @@ class InMemoryVectorStore {
   }
 }
 
+import { extractText } from "../services/upload-service";
+import { updateManifest } from "../services/manifest-service";
+
 // Singleton — built lazily on first access from the bundled knowledge base.
 let store: InMemoryVectorStore | null = null;
 
-export function getVectorStore(): InMemoryVectorStore {
+import fs from "fs";
+import path from "path";
+
+export async function getVectorStore(): Promise<InMemoryVectorStore> {
   if (store && store.isBuilt()) return store;
   store = new InMemoryVectorStore();
-  store.build(KNOWLEDGE_BASE);
+  
+  const docs = [...KNOWLEDGE_BASE];
+
+  try {
+    const DATA_DIR = path.join(process.cwd(), "data");
+    const MANIFEST_PATH = path.join(DATA_DIR, "manifest.json");
+    const EXTRACTED_DIR = path.join(DATA_DIR, "extracted");
+    
+    if (fs.existsSync(MANIFEST_PATH)) {
+      const data = fs.readFileSync(MANIFEST_PATH, "utf-8");
+      const manifest = JSON.parse(data);
+      const completedDocs = manifest.filter((m: any) => m.processingStatus === "completed");
+      
+      for (const entry of completedDocs) {
+        const extPath = path.join(EXTRACTED_DIR, `${entry.id}.txt`);
+        if (fs.existsSync(extPath)) {
+          const content = fs.readFileSync(extPath, "utf-8");
+          docs.push({
+            id: entry.id,
+            title: entry.originalFilename,
+            authors: "Uploaded Document",
+            year: new Date(entry.uploadedAt).getFullYear() || new Date().getFullYear(),
+            source: "User Upload",
+            content: content
+          });
+        } else {
+          // Attempt recovery
+          console.warn(`[VectorStore] Missing extracted text for ${entry.id}. Attempting recovery from source...`);
+          try {
+            const ext = path.extname(entry.filename);
+            const content = await extractText(entry.id, ext);
+            docs.push({
+              id: entry.id,
+              title: entry.originalFilename,
+              authors: "Uploaded Document",
+              year: new Date(entry.uploadedAt).getFullYear() || new Date().getFullYear(),
+              source: "User Upload",
+              content: content
+            });
+            console.log(`[VectorStore] Successfully recovered ${entry.id}`);
+          } catch (recoveryErr: any) {
+            console.error(`[VectorStore] Recovery failed for ${entry.id}: ${recoveryErr.message}`);
+            await updateManifest(entries => {
+              const mEntry = entries.find(e => e.id === entry.id);
+              if (mEntry) {
+                mEntry.processingStatus = "failed";
+                mEntry.errorMessage = "Extracted text and source file both missing/unreadable on startup recovery";
+              }
+            });
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[VectorStore] Failed to load persisted documents on startup", err);
+  }
+
+  store.build(docs);
   return store;
 }
 
