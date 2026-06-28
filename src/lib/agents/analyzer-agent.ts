@@ -21,12 +21,16 @@ Your job is to synthesize a grounded answer to the user's question using ONLY th
 
 Rules:
 - Answer in clear, well-structured prose. Use short paragraphs or bullet points where helpful.
-- Cite sources inline using [1], [2], ... notation matching the source index provided.
+- Cite sources inline using [1], [2], ... notation matching the source index provided. Attach citations directly to the specific facts they support, rather than bunching them at the end of a long list.
 - NEVER include information that is not supported by the sources. If the sources don't fully answer the question, say so explicitly.
 - If asked to compare, structure the answer as a comparison.
 - If asked for a procedure, structure the answer as numbered steps.
 - Keep the answer focused and concise (3-6 short paragraphs max).
-- If you receive "Revision notes" from a Critic agent, address each note explicitly when rewriting.`;
+- If you receive "Revision notes" from a Critic agent, address each note explicitly when rewriting.
+
+CONTENT FORMATTING GUIDELINES:
+- For narrative/research paper content (claims, findings, methodologies): Write in natural prose paragraphs or standard bullet points.
+- For resume/CV/profile-style content (dense lists of skills, tools, dates, roles): Do NOT cram multiple unrelated categories into a single bullet or run-on sentence. Instead, group related skills/tools under clear sub-headers (e.g., "Languages", "Frameworks"). Ensure each bullet contains only one tightly-related cluster of facts and is reasonably short (avoid multi-line wrapped text). Do not invent categories if the source does not support it.`;
 
 interface AnalyzerArgs {
   question: string;
@@ -68,13 +72,31 @@ ${
 Now synthesize a grounded answer. Cite sources as [1], [2], etc.`;
 
   try {
-    answer = await chat(
+    const rawAnswer = await chat(
       [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: userPrompt },
       ],
       { temperature: 0.3, maxTokens: 800 },
     );
+
+    // Defensive check: if the LLM hallucinated a JSON structure (e.g. {"answer": "..."}), extract it
+    const trimmed = rawAnswer.trim();
+    if (trimmed.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(trimmed.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?\s*```\s*$/i, ""));
+        if (parsed && typeof parsed === "object") {
+          answer = parsed.answer || parsed.text || parsed.content || rawAnswer;
+        } else {
+          answer = rawAnswer;
+        }
+      } catch {
+        answer = rawAnswer; // Fallback to raw if unparseable
+      }
+    } else {
+      answer = rawAnswer;
+    }
+
     status = "completed";
   } catch (e: any) {
     answer =
