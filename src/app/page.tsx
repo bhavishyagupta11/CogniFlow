@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -9,7 +9,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { AgentTrace } from "@/components/rag/agent-trace";
 import { SourcesPanel } from "@/components/rag/sources-panel";
 import { ArchitectureDialog } from "@/components/rag/architecture-dialog";
+import { KnowledgeBaseDialog } from "@/components/rag/knowledge-base-dialog";
 import { AgentRunResult } from "@/lib/agents/types";
+import { KNOWLEDGE_BASE } from "@/lib/rag/documents";
 import { toast } from "sonner";
 import {
   Send,
@@ -47,8 +49,25 @@ export default function HomePage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [archOpen, setArchOpen] = useState(false);
+  const [kbOpen, setKbOpen] = useState(false);
+  const [uploadedCount, setUploadedCount] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  const fetchDocCount = useCallback(async () => {
+    try {
+      const res = await fetch("/api/documents");
+      if (res.ok) {
+        const data = await res.json();
+        const completed = data.filter((d: any) => d.processingStatus === "completed").length;
+        setUploadedCount(completed);
+      }
+    } catch (e) {}
+  }, []);
+
+  useEffect(() => {
+    fetchDocCount();
+  }, [fetchDocCount]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -159,6 +178,14 @@ export default function HomePage() {
             <Button
               variant="outline"
               size="sm"
+              onClick={() => setKbOpen(true)}
+            >
+              <BookOpen className="h-4 w-4 mr-1.5" />
+              Knowledge Base
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => setArchOpen(true)}
             >
               <Workflow className="h-4 w-4 mr-1.5" />
@@ -186,7 +213,7 @@ export default function HomePage() {
           <ScrollArea className="flex-1" ref={scrollRef as any}>
             <div className="mx-auto max-w-3xl px-4 py-6 space-y-6">
               {messages.length === 0 && (
-                <WelcomeScreen onPickPrompt={(p) => handleSubmit(p)} />
+                <WelcomeScreen onPickPrompt={(p) => handleSubmit(p)} uploadedCount={uploadedCount} />
               )}
 
               {messages.map((msg, i) => (
@@ -283,11 +310,13 @@ export default function HomePage() {
       </div>
 
       <ArchitectureDialog open={archOpen} onOpenChange={setArchOpen} />
+      <KnowledgeBaseDialog open={kbOpen} onOpenChange={setKbOpen} onDocumentsChanged={fetchDocCount} />
     </div>
   );
 }
 
-function WelcomeScreen({ onPickPrompt }: { onPickPrompt: (p: string) => void }) {
+function WelcomeScreen({ onPickPrompt, uploadedCount }: { onPickPrompt: (p: string) => void, uploadedCount: number }) {
+  const totalPapers = KNOWLEDGE_BASE.length + uploadedCount;
   return (
     <Card className="border-2 border-dashed bg-gradient-to-br from-violet-50/50 to-rose-50/30 p-8 space-y-4">
       <div className="flex items-center gap-3">
@@ -313,7 +342,7 @@ function WelcomeScreen({ onPickPrompt }: { onPickPrompt: (p: string) => void }) 
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
         <div className="rounded-md border bg-white p-2">
-          <div className="font-semibold text-emerald-700">8 papers</div>
+          <div className="font-semibold text-emerald-700">{totalPapers} papers</div>
           <div className="text-muted-foreground">Bundled knowledge base</div>
         </div>
         <div className="rounded-md border bg-white p-2">
