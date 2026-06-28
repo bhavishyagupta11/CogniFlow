@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getManifest, updateManifest } from "@/lib/services/manifest-service";
 import { validateAndSaveUpload, computeHash } from "@/lib/services/upload-service";
 import { processDocument } from "@/lib/services/document-ingestion";
+
+export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const manifest = await getManifest();

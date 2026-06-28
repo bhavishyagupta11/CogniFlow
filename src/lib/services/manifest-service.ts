@@ -47,6 +47,10 @@ export async function getManifest(): Promise<ManifestEntry[]> {
       return JSON.parse(data) as ManifestEntry[];
     } catch (err: any) {
       if (err.code === "ENOENT") {
+        await fs.mkdir(DATA_DIR, { recursive: true });
+        await fs.mkdir(path.join(DATA_DIR, "uploads"), { recursive: true });
+        await fs.mkdir(path.join(DATA_DIR, "extracted"), { recursive: true });
+        await fs.writeFile(MANIFEST_PATH, "[]", "utf-8");
         return [];
       }
       // Handle corruption: log warning, backup, return empty array
