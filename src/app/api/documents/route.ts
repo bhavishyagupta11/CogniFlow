@@ -13,6 +13,18 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
+    const accessKey = process.env.UPLOAD_ACCESS_KEY;
+    const isDev = process.env.NODE_ENV === "development";
+    if (!accessKey && !isDev) {
+      return NextResponse.json({ error: { code: "FORBIDDEN", message: "Uploads are disabled." } }, { status: 403 });
+    }
+    if (accessKey) {
+      const providedKey = req.headers.get("x-access-key");
+      if (providedKey !== accessKey) {
+        return NextResponse.json({ error: { code: "UNAUTHORIZED", message: "Invalid access key." } }, { status: 401 });
+      }
+    }
+
     const formData = await req.formData();
     const files = formData.getAll("file") as File[];
     
