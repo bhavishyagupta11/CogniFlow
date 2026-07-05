@@ -1,0 +1,9 @@
+Alice joined ABC Technologies in 2018.
+
+ABC Technologies acquired XYZ Labs in 2021.
+
+XYZ Labs developed Project Atlas.
+
+Project Atlas is an AI platform used in healthcare.
+
+Healthcare organizations use Project Atlas for disease prediction.

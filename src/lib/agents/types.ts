@@ -5,6 +5,8 @@
  * (client) so the agent trace panel can render each step uniformly.
  */
 
+import { z } from "zod";
+
 export type AgentName =
   | "router"
   | "retriever"
@@ -32,15 +34,42 @@ export interface AgentStepBase {
   error?: string;
 }
 
+// --- ZOD SCHEMAS FOR RUNTIME VALIDATION ---
+
+export const RouterOutputSchema = z.object({
+  queryType: z.enum(["factual", "comparison", "synthesis", "procedural"]),
+  rewrittenQuery: z.string().min(1),
+  intentSummary: z.string(),
+  needsRetrieval: z.boolean(),
+});
+export type RouterOutput = z.infer<typeof RouterOutputSchema>;
+
+export const RerankerOutputSchema = z.object({
+  reranked: z.array(z.object({
+    chunkId: z.string(),
+    documentTitle: z.string(),
+    originalRank: z.number().int().min(1),
+    newRank: z.number().int().min(1),
+    llmScore: z.number().min(0).max(10),
+    rationale: z.string(),
+  }))
+});
+export type RerankerOutput = z.infer<typeof RerankerOutputSchema>;
+
+export const CriticOutputSchema = z.object({
+  verdict: z.enum(["faithful", "needs_revision"]),
+  faithfulnessScore: z.number().min(0).max(100),
+  issues: z.array(z.string()),
+  revisionNotes: z.string().optional(),
+});
+export type CriticOutput = z.infer<typeof CriticOutputSchema>;
+
+// --- STEP INTERFACES ---
+
 export interface RouterStep extends AgentStepBase {
   agent: "router";
   input: { question: string };
-  output: {
-    queryType: "factual" | "comparison" | "synthesis" | "procedural";
-    rewrittenQuery: string;
-    intentSummary: string;
-    needsRetrieval: boolean;
-  };
+  output: RouterOutput;
 }
 
 export interface RetrieverStep extends AgentStepBase {
@@ -60,16 +89,7 @@ export interface RetrieverStep extends AgentStepBase {
 export interface RerankerStep extends AgentStepBase {
   agent: "reranker";
   input: { query: string; numCandidates: number };
-  output: {
-    reranked: {
-      chunkId: string;
-      documentTitle: string;
-      originalRank: number;
-      newRank: number;
-      llmScore: number;
-      rationale: string;
-    }[];
-  };
+  output: RerankerOutput;
 }
 
 export interface AnalyzerStep extends AgentStepBase {
@@ -84,12 +104,7 @@ export interface AnalyzerStep extends AgentStepBase {
 export interface CriticStep extends AgentStepBase {
   agent: "critic";
   input: { answerLength: number; numSources: number };
-  output: {
-    verdict: "faithful" | "needs_revision";
-    faithfulnessScore: number;
-    issues: string[];
-    revisionNotes?: string;
-  };
+  output: CriticOutput;
 }
 
 export interface CoordinatorStep extends AgentStepBase {
@@ -131,4 +146,16 @@ export interface AgentRunResult {
   sources: CitedSource[];
   steps: AgentStep[];
   totalDurationMs: number;
+  error?: {
+    code: string;
+    type: string;
+    userMessage: string;
+    developerMessage: string;
+    retryable: boolean;
+    provider?: string;
+    requestId?: string;
+    traceId?: string;
+    timestamp?: string;
+    stack?: string;
+  };
 }

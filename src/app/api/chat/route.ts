@@ -11,6 +11,7 @@
 import "server-only";
 import { NextRequest, NextResponse } from "next/server";
 import { runMultiAgentPipeline } from "@/lib/agents/coordinator";
+import { logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -42,9 +43,14 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await runMultiAgentPipeline(question);
-    return NextResponse.json(result);
+    
+    // If the pipeline gracefully aborted with a structured error, we can still return 200
+    // so the client receives the partial trace and renders it correctly.
+    const statusCode = result.error ? 500 : 200;
+    
+    return NextResponse.json(result, { status: statusCode });
   } catch (e: any) {
-    console.error("[/api/chat] pipeline error:", e);
+    logger.error("Unhandled pipeline exception", e, { question });
     return NextResponse.json(
       { error: e?.message ?? "Pipeline failed" },
       { status: 500 },

@@ -4,6 +4,7 @@ import { chunkDocument } from "../rag/chunker";
 import { getVectorStore, KNOWLEDGE_BASE } from "../rag/vector-store";
 import { promises as fs } from "fs";
 import * as path from "path";
+import { logger } from "../logger";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const EXTRACTED_DIR = path.join(DATA_DIR, "extracted");
@@ -30,7 +31,7 @@ export async function rebuildVectorStoreFromManifest() {
     } catch (err) {
       // If extracted text is missing, attempt to re-extract from source
       try {
-        console.warn(`[Ingestion] Extracted text missing for ${entry.id}. Attempting re-extraction.`);
+        logger.warn(`[Ingestion] Extracted text missing for ${entry.id}. Attempting re-extraction.`);
         const ext = path.extname(entry.filename);
         const content = await extractText(entry.id, ext);
         customDocs.push({
@@ -42,7 +43,7 @@ export async function rebuildVectorStoreFromManifest() {
           content: content
         });
       } catch (extractErr) {
-        console.warn(`[Ingestion] Re-extraction failed for ${entry.id}. Marking as failed.`);
+        logger.warn(`[Ingestion] Re-extraction failed for ${entry.id}. Marking as failed.`, { error: String(extractErr) });
         await updateManifest(entries => {
           const mEntry = entries.find(e => e.id === entry.id);
           if (mEntry) {

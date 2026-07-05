@@ -190,8 +190,7 @@ export async function getVectorStore(): Promise<InMemoryVectorStore> {
             content: content
           });
         } else {
-          // Attempt recovery
-          console.warn(`[VectorStore] Missing extracted text for ${entry.id}. Attempting recovery from source...`);
+          logger.warn(`[VectorStore] Missing extracted text for ${entry.id}. Attempting recovery from source...`);
           try {
             const ext = path.extname(entry.filename);
             const content = await extractText(entry.id, ext);
@@ -205,7 +204,7 @@ export async function getVectorStore(): Promise<InMemoryVectorStore> {
             });
             console.log(`[VectorStore] Successfully recovered ${entry.id}`);
           } catch (recoveryErr: any) {
-            console.error(`[VectorStore] Recovery failed for ${entry.id}: ${recoveryErr.message}`);
+            logger.warn(`[VectorStore] Recovery failed for ${entry.id}`, { error: recoveryErr.message });
             await updateManifest(entries => {
               const mEntry = entries.find(e => e.id === entry.id);
               if (mEntry) {
@@ -218,7 +217,7 @@ export async function getVectorStore(): Promise<InMemoryVectorStore> {
       }
     }
   } catch (err) {
-    console.error("[VectorStore] Failed to load persisted documents on startup", err);
+    logger.error("[VectorStore] Failed to load persisted documents on startup", err);
   }
 
   store.build(docs);
@@ -227,4 +226,3 @@ export async function getVectorStore(): Promise<InMemoryVectorStore> {
 
 // Re-export for callers that need direct access to the documents
 export { KNOWLEDGE_BASE, type Document };
-

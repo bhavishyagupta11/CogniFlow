@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { getManifest, updateManifest } from "@/lib/services/manifest-service";
+import { getManifest, updateManifest, ManifestEntry } from "@/lib/services/manifest-service";
 import { validateAndSaveUpload, computeHash } from "@/lib/services/upload-service";
 import { processDocument } from "@/lib/services/document-ingestion";
+import { logger } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
 export async function GET() {
@@ -85,7 +86,9 @@ export async function POST(req: Request) {
 
         // Fire and forget background processing
         // Next.js running locally allows background promises
-        processDocument(docId).catch(console.error);
+        processDocument(docId).catch((err) => {
+          logger.error(`[API] Failed to process document ${docId}`, err);
+        });
 
         results.push({ status: 201, document: newEntry });
 

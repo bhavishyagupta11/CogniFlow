@@ -13,19 +13,21 @@
  */
 
 import "server-only";
+import { z } from "zod";
 import { chatJson } from "../llm";
 import { getVectorStore } from "../rag/vector-store";
 import { RerankerStep } from "./types";
+import { Result, success, failure } from "../result";
+import { logger } from "../logger";
+import { ParsingError, BaseApplicationError } from "../errors";
 
-interface RerankerResponseItem {
-  chunkId: string;
-  llmScore: number;
-  rationale: string;
-}
-
-interface RerankerResponse {
-  items: RerankerResponseItem[];
-}
+const LlmRerankerResponseSchema = z.object({
+  items: z.array(z.object({
+    chunkId: z.string(),
+    llmScore: z.number().min(0).max(10),
+    rationale: z.string()
+  }))
+});
 
 const SYSTEM_PROMPT = `You are the Reranker agent in a multi-agent research assistant.
 You will receive a query and a list of candidate text chunks (with their chunkId).
@@ -41,8 +43,7 @@ Also provide a one-sentence rationale for each score.
 Return JSON ONLY with this exact schema:
 {
   "items": [
-    { "chunkId": "...", "llmScore": 8.5, "rationale": "..." },
-    ...
+    { "chunkId": "...", "llmScore": 8.5, "rationale": "..." }
   ]
 }
 
@@ -55,10 +56,10 @@ export async function runRerankerAgent(
   query: string,
   candidateChunkIds: string[],
   stepId: string,
-): Promise<RerankerStep> {
+  requestId: string
+): Promise<Result<RerankerStep>> {
   const startedAt = Date.now();
-  let status: RerankerStep["status"] = "running";
-  let error: string | undefined;
+  logger.info("Starting Reranker Agent", { requestId, agent: "reranker", stepId, candidateCount: candidateChunkIds.length });
 
   const store = await getVectorStore();
   const allChunks = store.getChunks();
@@ -66,23 +67,20 @@ export async function runRerankerAgent(
     candidateChunkIds.includes(c.id),
   );
 
-  let output: RerankerStep["output"];
-
   if (candidateChunks.length === 0) {
-    output = { reranked: [] };
-    status = "completed";
     const finishedAt = Date.now();
-    return {
+    logger.info("Reranker Agent fast-path completed (no candidates)", { requestId, agent: "reranker", durationMs: finishedAt - startedAt });
+    return success({
       id: stepId,
       agent: "reranker",
       label: "Reranking candidates (LLM cross-encoder)",
       startedAt,
       finishedAt,
       durationMs: finishedAt - startedAt,
-      status,
+      status: "completed",
       input: { query, numCandidates: 0 },
-      output,
-    };
+      output: { reranked: [] },
+    });
   }
 
   // Build a compact representation of each candidate for the LLM
@@ -96,7 +94,7 @@ export async function runRerankerAgent(
   }));
 
   try {
-    const response = await chatJson<RerankerResponse>(
+    const rawOutput = await chatJson<unknown>(
       [
         { role: "system", content: SYSTEM_PROMPT },
         {
@@ -109,7 +107,18 @@ export async function runRerankerAgent(
         },
       ],
       { temperature: 0, maxTokens: 800 },
+      requestId,
+      "reranker"
     );
+
+    const parseResult = LlmRerankerResponseSchema.safeParse(rawOutput);
+    if (!parseResult.success) {
+      const errorMsg = parseResult.error.errors.map(e => `${e.path.join(".")}: ${e.message}`).join(", ");
+      logger.warn("Reranker validation failed", { requestId, agent: "reranker", errors: errorMsg });
+      throw new ParsingError("RERANKER_SCHEMA_MISMATCH", `Reranker output violated schema: ${errorMsg}`, { requestId, agent: "reranker" });
+    }
+
+    const response = parseResult.data;
 
     // Merge LLM scores with the original candidate metadata and re-sort
     const scoreById = new Map(
@@ -130,35 +139,28 @@ export async function runRerankerAgent(
       .sort((a, b) => b.llmScore - a.llmScore)
       .map((item, i) => ({ ...item, newRank: i + 1 }));
 
-    output = { reranked };
-    status = "completed";
-  } catch (e: any) {
-    // Fallback: keep original ordering, assign neutral scores
-    output = {
-      reranked: candidateChunks.map((chunk, i) => ({
-        chunkId: chunk.id,
-        documentTitle: chunk.documentTitle,
-        originalRank: i + 1,
-        newRank: i + 1,
-        llmScore: 5,
-        rationale: "Reranker fallback: LLM call failed, keeping original order.",
-      })),
-    };
-    status = "error";
-    error = e?.message ?? "Unknown reranker error";
-  }
+    const finishedAt = Date.now();
+    logger.info("Reranker Agent completed successfully", { 
+      requestId, agent: "reranker", durationMs: finishedAt - startedAt, rerankedCount: reranked.length 
+    });
 
-  const finishedAt = Date.now();
-  return {
-    id: stepId,
-    agent: "reranker",
-    label: "Reranking candidates (LLM cross-encoder)",
-    startedAt,
-    finishedAt,
-    durationMs: finishedAt - startedAt,
-    status,
-    error,
-    input: { query, numCandidates: candidateChunks.length },
-    output,
-  };
+    return success({
+      id: stepId,
+      agent: "reranker",
+      label: "Reranking candidates (LLM cross-encoder)",
+      startedAt,
+      finishedAt,
+      durationMs: finishedAt - startedAt,
+      status: "completed",
+      input: { query, numCandidates: candidateChunks.length },
+      output: { reranked },
+    });
+  } catch (e: any) {
+    if (e instanceof BaseApplicationError) {
+      return failure(e);
+    }
+    return failure(
+      new ParsingError("RERANKER_UNEXPECTED_ERROR", e?.message ?? "Unknown reranker error", { requestId, agent: "reranker" }, e)
+    );
+  }
 }

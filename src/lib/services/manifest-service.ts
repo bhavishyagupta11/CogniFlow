@@ -1,5 +1,6 @@
 import { promises as fs } from "fs";
 import * as path from "path";
+import { logger } from "../logger";
 
 export interface ManifestEntry {
   schemaVersion: number;
@@ -54,9 +55,9 @@ export async function getManifest(): Promise<ManifestEntry[]> {
         return [];
       }
       // Handle corruption: log warning, backup, return empty array
-      console.warn("[ManifestService] Manifest corrupted. Backing up and starting fresh.", err);
+      logger.warn("[ManifestService] Manifest corrupted. Backing up and starting fresh.", { error: String(err) });
       try {
-        await fs.rename(MANIFEST_PATH, `${MANIFEST_PATH}.corrupted-${Date.now()}`);
+        import("fs").then(fsSync => fsSync.copyFileSync(MANIFEST_PATH, `${MANIFEST_PATH}.bak.${Date.now()}`));
       } catch (e) {
         // Ignore backup error
       }

@@ -97,20 +97,52 @@ export default function HomePage() {
         signal: controller.signal,
       });
 
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: "Request failed" }));
-        throw new Error(err.error ?? `HTTP ${res.status}`);
+      let result: any = null;
+      try {
+        result = await res.json();
+      } catch (parseError) {
+        throw new Error(`HTTP ${res.status} (Unparseable response)`);
       }
 
-      const result: AgentRunResult = await res.json();
+      if (!res.ok) {
+        // If the backend returned a structured pipeline failure, we still want to display the partial trace
+        if (result && result.error && typeof result.error === "object") {
+          const runResult = result as AgentRunResult;
+          const diag = [
+            `**Infrastructure Error**: ${runResult.error?.userMessage}`,
+            "",
+            `*Developer Diagnostics*: ${runResult.error?.developerMessage}`,
+            runResult.error?.provider ? `*Provider*: \`${runResult.error.provider}\`` : null,
+            runResult.error?.requestId ? `*Request ID*: \`${runResult.error.requestId}\`` : null,
+            runResult.error?.timestamp ? `*Timestamp*: \`${runResult.error.timestamp}\`` : null,
+          ].filter(Boolean).join("\n");
+
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "assistant",
+              content: diag,
+              sources: runResult.sources,
+              steps: runResult.steps,
+              totalDurationMs: runResult.totalDurationMs,
+              error: true
+            },
+          ]);
+          return;
+        } else {
+           throw new Error(result.error ?? `HTTP ${res.status}`);
+        }
+      }
+
+      const runResult = result as AgentRunResult;
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: result.answer,
-          sources: result.sources,
-          steps: result.steps,
-          totalDurationMs: result.totalDurationMs,
+          content: runResult.answer,
+          sources: runResult.sources,
+          steps: runResult.steps,
+          totalDurationMs: runResult.totalDurationMs,
         },
       ]);
     } catch (e: any) {

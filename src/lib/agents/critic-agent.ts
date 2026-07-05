@@ -20,14 +20,10 @@
 import "server-only";
 import { chatJson } from "../llm";
 import { Chunk } from "../rag/chunker";
-import { CriticStep } from "./types";
-
-interface CriticResponse {
-  verdict: "faithful" | "needs_revision";
-  faithfulnessScore: number;
-  issues: string[];
-  revisionNotes?: string;
-}
+import { CriticStep, CriticOutputSchema } from "./types";
+import { Result, success, failure } from "../result";
+import { logger } from "../logger";
+import { ParsingError, BaseApplicationError } from "../errors";
 
 const SYSTEM_PROMPT = `You are the Critic agent in a multi-agent research assistant.
 Your job is to verify that the Analyzer's answer is faithful to the provided source chunks.
@@ -59,13 +55,13 @@ interface CriticArgs {
   answer: string;
   chunks: Chunk[];
   stepId: string;
+  requestId: string;
 }
 
-export async function runCriticAgent(args: CriticArgs): Promise<CriticStep> {
-  const { question, answer, chunks, stepId } = args;
+export async function runCriticAgent(args: CriticArgs): Promise<Result<CriticStep>> {
+  const { question, answer, chunks, stepId, requestId } = args;
   const startedAt = Date.now();
-  let status: CriticStep["status"] = "running";
-  let error: string | undefined;
+  logger.info("Starting Critic Agent", { requestId, agent: "critic", stepId, numSources: chunks.length });
 
   const sourcesBlock = chunks
     .map(
@@ -74,56 +70,52 @@ export async function runCriticAgent(args: CriticArgs): Promise<CriticStep> {
     )
     .join("\n\n---\n\n");
 
-  let output: CriticStep["output"];
-
   try {
-    const response = await chatJson<CriticResponse>(
+    const rawOutput = await chatJson<unknown>(
       [
         { role: "system", content: SYSTEM_PROMPT },
         {
           role: "user",
-          content: `User question: ${question}
-
-Proposed answer:
-${answer}
-
-Source chunks:
-${sourcesBlock}
-
-Evaluate the answer's faithfulness to the sources.`,
+          content: `User question: ${question}\n\nProposed answer:\n${answer}\n\nSource chunks:\n${sourcesBlock}\n\nEvaluate the answer's faithfulness to the sources.`,
         },
       ],
       { temperature: 0, maxTokens: 600 },
+      requestId,
+      "critic"
     );
 
-    output = {
-      verdict: response.verdict,
-      faithfulnessScore: response.faithfulnessScore,
-      issues: response.issues ?? [],
-      revisionNotes: response.revisionNotes,
-    };
-    status = "completed";
-  } catch (e: any) {
-    output = {
-      verdict: "faithful",
-      faithfulnessScore: 100,
-      issues: [],
-    };
-    status = "error";
-    error = e?.message ?? "Unknown critic error";
-  }
+    const parseResult = CriticOutputSchema.safeParse(rawOutput);
+    
+    if (!parseResult.success) {
+      const errorMsg = parseResult.error.errors.map(e => `${e.path.join(".")}: ${e.message}`).join(", ");
+      logger.warn("Critic validation failed", { requestId, agent: "critic", errors: errorMsg });
+      throw new ParsingError("CRITIC_SCHEMA_MISMATCH", `Critic output violated schema: ${errorMsg}`, { requestId, agent: "critic" });
+    }
 
-  const finishedAt = Date.now();
-  return {
-    id: stepId,
-    agent: "critic",
-    label: "Validating answer against sources",
-    startedAt,
-    finishedAt,
-    durationMs: finishedAt - startedAt,
-    status,
-    error,
-    input: { answerLength: answer.length, numSources: chunks.length },
-    output,
-  };
+    const output = parseResult.data;
+    const finishedAt = Date.now();
+    
+    logger.info("Critic Agent completed successfully", { 
+      requestId, agent: "critic", durationMs: finishedAt - startedAt, verdict: output.verdict 
+    });
+
+    return success({
+      id: stepId,
+      agent: "critic",
+      label: "Validating answer against sources",
+      startedAt,
+      finishedAt,
+      durationMs: finishedAt - startedAt,
+      status: "completed",
+      input: { answerLength: answer.length, numSources: chunks.length },
+      output,
+    });
+  } catch (e: any) {
+    if (e instanceof BaseApplicationError) {
+      return failure(e);
+    }
+    return failure(
+      new ParsingError("CRITIC_UNEXPECTED_ERROR", e?.message ?? "Unknown critic error", { requestId, agent: "critic" }, e)
+    );
+  }
 }

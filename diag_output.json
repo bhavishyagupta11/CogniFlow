@@ -1,0 +1,246 @@
+{
+  "question": "What is attention?",
+  "answer": "I'm sorry, I encountered an error while synthesizing the answer. Please try again.",
+  "sources": [
+    {
+      "chunkId": "doc-attention-2017#chunk-1",
+      "documentId": "doc-attention-2017",
+      "documentTitle": "Attention Is All You Need",
+      "authors": "Vaswani et al.",
+      "year": 2017,
+      "source": "NeurIPS 2017",
+      "chunkIndex": 1,
+      "chunkContent": "Attention Is All You Need\n\n# Attention Is All You Need\n\nThe dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a decoder. The best performing models also connect the encoder and decoder through an attention mechanism.",
+      "score": 0,
+      "llmScore": 5
+    },
+    {
+      "chunkId": "doc-attention-2017#chunk-2",
+      "documentId": "doc-attention-2017",
+      "documentTitle": "Attention Is All You Need",
+      "authors": "Vaswani et al.",
+      "year": 2017,
+      "source": "NeurIPS 2017",
+      "chunkIndex": 2,
+      "chunkContent": "ng models also connect the encoder and decoder through an attention mechanism.\n\nWe propose a new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely. Experiments on two machine translation tasks show these models to be superior in quality while being more parallelizable and requiring significantly less time to train.\n\n## Model Architecture\n\nThe Transformer follows this overall architecture using stacked self-attention and point-wise, fully connected layers for both the encoder and decoder.",
+      "score": 0,
+      "llmScore": 5
+    },
+    {
+      "chunkId": "doc-attention-2017#chunk-5",
+      "documentId": "doc-attention-2017",
+      "documentTitle": "Attention Is All You Need",
+      "authors": "Vaswani et al.",
+      "year": 2017,
+      "source": "NeurIPS 2017",
+      "chunkIndex": 5,
+      "chunkContent": "orms multi-head attention over the output of the encoder stack.\n\n### Attention\n\nAn attention function can be described as mapping a query and a set of key-value pairs to an output, where the query, keys, values, and output are all vectors. The output is computed as a weighted sum of the values, where the weight assigned to each value is computed by a compatibility function of the query with the corresponding key.\n\n### Scaled Dot-Product Attention",
+      "score": 0,
+      "llmScore": 5
+    },
+    {
+      "chunkId": "doc-attention-2017#chunk-6",
+      "documentId": "doc-attention-2017",
+      "documentTitle": "Attention Is All You Need",
+      "authors": "Vaswani et al.",
+      "year": 2017,
+      "source": "NeurIPS 2017",
+      "chunkIndex": 6,
+      "chunkContent": "ion of the query with the corresponding key.\n\n### Scaled Dot-Product Attention\n\nWe call our particular attention \"Scaled Dot-Product Attention\". The input consists of queries and keys of dimension d_k, and values of dimension d_v. We compute the dot products of the query with all keys, divide each by the square root of d_k, and apply a softmax function to obtain the weights on the values.\n\n### Multi-Head Attention",
+      "score": 0,
+      "llmScore": 5
+    }
+  ],
+  "steps": [
+    {
+      "id": "router-1783266741258-1",
+      "agent": "router",
+      "label": "Analyzing question & rewriting query",
+      "startedAt": 1783266741258,
+      "finishedAt": 1783266743055,
+      "durationMs": 1797,
+      "status": "error",
+      "error": "402 This request requires more credits, or fewer max_tokens. You requested up to 300 tokens, but can only afford 292. To increase, visit https://openrouter.ai/settings/credits and upgrade to a paid account",
+      "input": {
+        "question": "What is attention?"
+      },
+      "output": {
+        "queryType": "factual",
+        "rewrittenQuery": "What is attention?",
+        "intentSummary": "Fallback: LLM router failed; using raw question.",
+        "needsRetrieval": true
+      }
+    },
+    {
+      "id": "retriever-1783266743056-2",
+      "agent": "retriever",
+      "label": "Retrieving top-5 chunks (TF-IDF + MMR)",
+      "startedAt": 1783266743056,
+      "finishedAt": 1783266743062,
+      "durationMs": 6,
+      "status": "completed",
+      "input": {
+        "query": "What is attention?",
+        "k": 5
+      },
+      "output": {
+        "candidates": [
+          {
+            "chunkId": "doc-attention-2017#chunk-1",
+            "documentTitle": "Attention Is All You Need",
+            "score": 0.359,
+            "preview": "Attention Is All You Need # Attention Is All You Need The dominant sequence transduction models are based on complex recurrent or convolutional neural network…"
+          },
+          {
+            "chunkId": "doc-attention-2017#chunk-6",
+            "documentTitle": "Attention Is All You Need",
+            "score": 0.3477,
+            "preview": "ion of the query with the corresponding key. ### Scaled Dot-Product Attention We call our particular attention \"Scaled Dot-Product Attention\". The input consi…"
+          },
+          {
+            "chunkId": "doc-attention-2017#chunk-5",
+            "documentTitle": "Attention Is All You Need",
+            "score": 0.3192,
+            "preview": "orms multi-head attention over the output of the encoder stack. ### Attention An attention function can be described as mapping a query and a set of key-value…"
+          },
+          {
+            "chunkId": "doc-attention-2017#chunk-7",
+            "documentTitle": "Attention Is All You Need",
+            "score": 0.2931,
+            "preview": "oftmax function to obtain the weights on the values. ### Multi-Head Attention Instead of performing a single attention function with d_model-dimensional keys,…"
+          },
+          {
+            "chunkId": "doc-attention-2017#chunk-2",
+            "documentTitle": "Attention Is All You Need",
+            "score": 0.2568,
+            "preview": "ng models also connect the encoder and decoder through an attention mechanism. We propose a new simple network architecture, the Transformer, based solely on a…"
+          }
+        ],
+        "stats": {
+          "vocabSize": 884,
+          "numChunks": 55
+        }
+      }
+    },
+    {
+      "id": "reranker-1783266743062-3",
+      "agent": "reranker",
+      "label": "Reranking candidates (LLM cross-encoder)",
+      "startedAt": 1783266743063,
+      "finishedAt": 1783266744905,
+      "durationMs": 1842,
+      "status": "error",
+      "error": "402 This request requires more credits, or fewer max_tokens. You requested up to 800 tokens, but can only afford 292. To increase, visit https://openrouter.ai/settings/credits and upgrade to a paid account",
+      "input": {
+        "query": "What is attention?",
+        "numCandidates": 5
+      },
+      "output": {
+        "reranked": [
+          {
+            "chunkId": "doc-attention-2017#chunk-1",
+            "documentTitle": "Attention Is All You Need",
+            "originalRank": 1,
+            "newRank": 1,
+            "llmScore": 5,
+            "rationale": "Reranker fallback: LLM call failed, keeping original order."
+          },
+          {
+            "chunkId": "doc-attention-2017#chunk-2",
+            "documentTitle": "Attention Is All You Need",
+            "originalRank": 2,
+            "newRank": 2,
+            "llmScore": 5,
+            "rationale": "Reranker fallback: LLM call failed, keeping original order."
+          },
+          {
+            "chunkId": "doc-attention-2017#chunk-5",
+            "documentTitle": "Attention Is All You Need",
+            "originalRank": 3,
+            "newRank": 3,
+            "llmScore": 5,
+            "rationale": "Reranker fallback: LLM call failed, keeping original order."
+          },
+          {
+            "chunkId": "doc-attention-2017#chunk-6",
+            "documentTitle": "Attention Is All You Need",
+            "originalRank": 4,
+            "newRank": 4,
+            "llmScore": 5,
+            "rationale": "Reranker fallback: LLM call failed, keeping original order."
+          },
+          {
+            "chunkId": "doc-attention-2017#chunk-7",
+            "documentTitle": "Attention Is All You Need",
+            "originalRank": 5,
+            "newRank": 5,
+            "llmScore": 5,
+            "rationale": "Reranker fallback: LLM call failed, keeping original order."
+          }
+        ]
+      }
+    },
+    {
+      "id": "analyzer-1783266744905-4",
+      "agent": "analyzer",
+      "label": "Synthesizing grounded answer",
+      "startedAt": 1783266744905,
+      "finishedAt": 1783266746291,
+      "durationMs": 1386,
+      "status": "error",
+      "error": "402 This request requires more credits, or fewer max_tokens. You requested up to 800 tokens, but can only afford 292. To increase, visit https://openrouter.ai/settings/credits and upgrade to a paid account",
+      "input": {
+        "query": "What is attention?",
+        "numSources": 4,
+        "iteration": 1
+      },
+      "output": {
+        "answer": "I'm sorry, I encountered an error while synthesizing the answer. Please try again.",
+        "citationsUsed": 0
+      }
+    },
+    {
+      "id": "critic-1783266746291-5",
+      "agent": "critic",
+      "label": "Validating answer against sources",
+      "startedAt": 1783266746292,
+      "finishedAt": 1783266747524,
+      "durationMs": 1232,
+      "status": "error",
+      "error": "402 This request requires more credits, or fewer max_tokens. You requested up to 600 tokens, but can only afford 292. To increase, visit https://openrouter.ai/settings/credits and upgrade to a paid account",
+      "input": {
+        "answerLength": 82,
+        "numSources": 4
+      },
+      "output": {
+        "verdict": "faithful",
+        "faithfulnessScore": 100,
+        "issues": []
+      }
+    },
+    {
+      "id": "coordinator-1783266747524-6",
+      "agent": "coordinator",
+      "label": "Pipeline completed with errors",
+      "startedAt": 1783266741258,
+      "finishedAt": 1783266747524,
+      "durationMs": 6266,
+      "status": "error",
+      "input": {
+        "question": "What is attention?"
+      },
+      "output": {
+        "flow": [
+          "router",
+          "retriever",
+          "reranker",
+          "analyzer",
+          "critic"
+        ],
+        "totalIterations": 1,
+        "finalVerdict": "faithful"
+      }
+    }
+  ],
+  "totalDurationMs": 6266
+}

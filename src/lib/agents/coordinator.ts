@@ -16,6 +16,7 @@
  */
 
 import "server-only";
+import { randomUUID } from "crypto";
 import { getVectorStore } from "../rag/vector-store";
 import { Chunk } from "../rag/chunker";
 import { KNOWLEDGE_BASE } from "../rag/documents";
@@ -30,6 +31,8 @@ import {
   CitedSource,
   CoordinatorStep,
 } from "./types";
+import { logger } from "../logger";
+import { BaseApplicationError } from "../errors";
 
 const MAX_ITERATIONS = 2;
 const TOP_K = 5;
@@ -42,12 +45,52 @@ export async function runMultiAgentPipeline(
   question: string,
 ): Promise<AgentRunResult> {
   const runStart = Date.now();
+  const requestId = randomUUID();
+  logger.info("Starting Multi-Agent Pipeline", { requestId, question });
+
   const steps: AgentStep[] = [];
   let stepCounter = 0;
   const nextId = (prefix: string) => makeStepId(prefix, ++stepCounter);
 
+  // Helper to construct error response state
+  const buildErrorResult = (err: BaseApplicationError, fallbackAnswer: string): AgentRunResult => {
+    const errorStep: CoordinatorStep = {
+      id: nextId("coordinator"),
+      agent: "coordinator",
+      label: "Pipeline aborted due to infrastructure failure",
+      startedAt: runStart,
+      finishedAt: Date.now(),
+      durationMs: Date.now() - runStart,
+      status: "error",
+      error: err.developerMessage,
+      input: { question },
+      output: { flow: [], totalIterations: 0, finalVerdict: "aborted" }
+    };
+    steps.push(errorStep);
+    
+    return {
+      question,
+      answer: fallbackAnswer,
+      sources: [],
+      steps,
+      totalDurationMs: Date.now() - runStart,
+      error: {
+        code: err.code,
+        type: err.type,
+        userMessage: err.userMessage,
+        developerMessage: err.developerMessage,
+        retryable: err.retryable
+      }
+    };
+  };
+
   // ─── 1. Router ────────────────────────────────────────────────────────
-  const routerStep = await runRouterAgent(question, nextId("router"));
+  const routerResult = await runRouterAgent(question, nextId("router"), requestId);
+  if (!routerResult.success) {
+    logger.error("Pipeline failed at Router", routerResult.error, { requestId });
+    return buildErrorResult(routerResult.error, routerResult.error.userMessage);
+  }
+  const routerStep = routerResult.data;
   steps.push(routerStep);
   const { rewrittenQuery, queryType, needsRetrieval } = routerStep.output;
 
@@ -71,8 +114,7 @@ export async function runMultiAgentPipeline(
     steps.push(coordinatorStep);
     return {
       question,
-      answer:
-        "Hi! Ask me about transformers, BERT, GPT-3, RAG, chain-of-thought, ReAct, Constitutional AI, or LangGraph and I'll route it through the full multi-agent pipeline.",
+      answer: "Hi! Ask me about transformers, BERT, GPT-3, RAG, chain-of-thought, ReAct, Constitutional AI, or LangGraph and I'll route it through the full multi-agent pipeline.",
       sources: [],
       steps,
       totalDurationMs: Date.now() - runStart,
@@ -80,11 +122,17 @@ export async function runMultiAgentPipeline(
   }
 
   // ─── 2. Retriever ────────────────────────────────────────────────────
-  const retrieverStep = await runRetrieverAgent(
+  const retrieverResult = await runRetrieverAgent(
     rewrittenQuery,
     TOP_K,
     nextId("retriever"),
+    requestId
   );
+  if (!retrieverResult.success) {
+    logger.error("Pipeline failed at Retriever", retrieverResult.error, { requestId });
+    return buildErrorResult(retrieverResult.error, retrieverResult.error.userMessage);
+  }
+  const retrieverStep = retrieverResult.data;
   steps.push(retrieverStep);
   const candidateIds = retrieverStep.output.candidates.map((c) => c.chunkId);
 
@@ -107,8 +155,7 @@ export async function runMultiAgentPipeline(
     steps.push(coordinatorStep);
     return {
       question,
-      answer:
-        "I couldn't find any relevant passages in my knowledge base for that question. Try asking about transformers, BERT, GPT-3, RAG, chain-of-thought prompting, ReAct, Constitutional AI, or LangGraph.",
+      answer: "I couldn't find any relevant passages in my knowledge base for that question.",
       sources: [],
       steps,
       totalDurationMs: Date.now() - runStart,
@@ -116,11 +163,17 @@ export async function runMultiAgentPipeline(
   }
 
   // ─── 3. Reranker ─────────────────────────────────────────────────────
-  const rerankerStep = await runRerankerAgent(
+  const rerankerResult = await runRerankerAgent(
     rewrittenQuery,
     candidateIds,
     nextId("reranker"),
+    requestId
   );
+  if (!rerankerResult.success) {
+    logger.error("Pipeline failed at Reranker", rerankerResult.error, { requestId });
+    return buildErrorResult(rerankerResult.error, rerankerResult.error.userMessage);
+  }
+  const rerankerStep = rerankerResult.data;
   steps.push(rerankerStep);
 
   // Pick the top-N reranked chunks (cap at 4 to keep the prompt manageable)
@@ -142,53 +195,67 @@ export async function runMultiAgentPipeline(
 
   // ─── 4. Analyzer ⇄ Critic loop ──────────────────────────────────────
   let iteration = 0;
-  let analyzerStep;
-  let criticStep;
   let finalAnswer = "";
-
+  let finalVerdict = "unknown";
+  
   while (iteration < MAX_ITERATIONS) {
     iteration++;
-    analyzerStep = await runAnalyzerAgent({
+    const analyzerResult = await runAnalyzerAgent({
       question,
       queryType,
       chunks: finalChunks,
       iteration,
-      revisionNotes:
-        iteration > 1 ? criticStep?.output.revisionNotes : undefined,
+      revisionNotes: iteration > 1 && steps.length > 0 ? (steps[steps.length - 1].output as any).revisionNotes : undefined,
       stepId: nextId("analyzer"),
+      requestId
     });
+
+    if (!analyzerResult.success) {
+      logger.error(`Pipeline failed at Analyzer (iteration ${iteration})`, analyzerResult.error, { requestId });
+      return buildErrorResult(analyzerResult.error, analyzerResult.error.userMessage);
+    }
+
+    const analyzerStep = analyzerResult.data;
     steps.push(analyzerStep);
     finalAnswer = analyzerStep.output.answer;
 
-    criticStep = await runCriticAgent({
+    const criticResult = await runCriticAgent({
       question,
       answer: finalAnswer,
       chunks: finalChunks,
       stepId: nextId("critic"),
+      requestId
     });
-    steps.push(criticStep);
 
-    if (criticStep.output.verdict === "faithful") {
+    if (!criticResult.success) {
+      logger.error(`Pipeline failed at Critic (iteration ${iteration})`, criticResult.error, { requestId });
+      return buildErrorResult(criticResult.error, criticResult.error.userMessage);
+    }
+
+    const criticStep = criticResult.data;
+    steps.push(criticStep);
+    finalVerdict = criticStep.output.verdict;
+
+    if (finalVerdict === "faithful") {
       break;
     }
     // Otherwise: loop back to Analyzer with revision notes
   }
 
   // ─── 5. Coordinator summary ─────────────────────────────────────────
-  const hasErrors = steps.some((s) => s.status === "error");
   const coordinatorStep: CoordinatorStep = {
     id: nextId("coordinator"),
     agent: "coordinator",
-    label: hasErrors ? "Pipeline completed with errors" : "Pipeline complete",
+    label: "Pipeline complete",
     startedAt: runStart,
     finishedAt: Date.now(),
     durationMs: Date.now() - runStart,
-    status: hasErrors ? "error" : "completed",
+    status: "completed",
     input: { question },
     output: {
       flow: ["router", "retriever", "reranker", "analyzer", "critic"],
       totalIterations: iteration,
-      finalVerdict: criticStep?.output.verdict ?? "unknown",
+      finalVerdict,
     },
   };
   steps.push(coordinatorStep);
@@ -210,7 +277,8 @@ export async function runMultiAgentPipeline(
       llmScore: llmScoreById.get(c.id),
     };
   });
-  void sources; // avoid unused warning in some toolchains
+
+  logger.info("Multi-Agent Pipeline completed successfully", { requestId, durationMs: Date.now() - runStart });
 
   return {
     question,

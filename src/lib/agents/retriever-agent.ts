@@ -13,24 +13,28 @@
 import "server-only";
 import { getVectorStore } from "../rag/vector-store";
 import { RetrieverStep } from "./types";
+import { Result, success, failure } from "../result";
+import { RetrieverError } from "../errors";
 
 export async function runRetrieverAgent(
   query: string,
   k: number,
   stepId: string,
-): Promise<RetrieverStep> {
+  requestId: string
+): Promise<Result<RetrieverStep>> {
   const startedAt = Date.now();
-  let status: RetrieverStep["status"] = "running";
-  let error: string | undefined;
-
-  const store = await getVectorStore();
-  const stats = store.getStats();
-
-  let output: RetrieverStep["output"];
-
+  
   try {
+    const store = await getVectorStore();
+    const stats = store.getStats();
+
     const scored = store.searchWithMMR(query, k, 0.7);
-    output = {
+    
+    if (scored.length === 0) {
+      throw new RetrieverError("NO_RESULTS", "Vector search returned no results.", { requestId, agent: "retriever" });
+    }
+
+    const output = {
       candidates: scored.map((s) => ({
         chunkId: s.chunk.id,
         documentTitle: s.chunk.documentTitle,
@@ -41,24 +45,36 @@ export async function runRetrieverAgent(
       })),
       stats: { vocabSize: stats.vocabSize, numChunks: stats.numChunks },
     };
-    status = "completed";
-  } catch (e: any) {
-    output = { candidates: [], stats: { vocabSize: 0, numChunks: 0 } };
-    status = "error";
-    error = e?.message ?? "Unknown retriever error";
-  }
 
-  const finishedAt = Date.now();
-  return {
-    id: stepId,
-    agent: "retriever",
-    label: `Retrieving top-${k} chunks (TF-IDF + MMR)`,
-    startedAt,
-    finishedAt,
-    durationMs: finishedAt - startedAt,
-    status,
-    error,
-    input: { query, k },
-    output,
-  };
+    const finishedAt = Date.now();
+    return success({
+      id: stepId,
+      agent: "retriever",
+      label: `Retrieving top-${k} chunks (TF-IDF + MMR)`,
+      startedAt,
+      finishedAt,
+      durationMs: finishedAt - startedAt,
+      status: "completed",
+      input: { query, k },
+      output,
+    });
+  } catch (e: any) {
+    const finishedAt = Date.now();
+    
+    // If it's already a RetrieverError, pass it through. Otherwise wrap it.
+    const err = e instanceof RetrieverError ? e : new RetrieverError("RETRIEVER_FAILED", e?.message ?? "Unknown retriever error", { requestId, agent: "retriever" }, e);
+    
+    return failure(err, {
+      id: stepId,
+      agent: "retriever",
+      label: `Retrieving top-${k} chunks (TF-IDF + MMR)`,
+      startedAt,
+      finishedAt,
+      durationMs: finishedAt - startedAt,
+      status: "error",
+      error: err.developerMessage,
+      input: { query, k },
+      output: { candidates: [], stats: { vocabSize: 0, numChunks: 0 } },
+    });
+  }
 }

@@ -1,0 +1,13 @@
+Artificial Intelligence (AI) is the field of creating machines capable of performing tasks that normally require human intelligence.
+
+Machine Learning is a subset of Artificial Intelligence.
+
+Deep Learning is a subset of Machine Learning.
+
+Neural Networks consist of interconnected neurons organized into input, hidden, and output layers.
+
+Large Language Models (LLMs) are trained using transformer architectures.
+
+The Transformer architecture was introduced in the paper "Attention Is All You Need" by Vaswani et al. in 2017.
+
+ChatGPT is based on the GPT family of transformer models.

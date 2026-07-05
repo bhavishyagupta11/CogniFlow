@@ -12,14 +12,10 @@
 
 import "server-only";
 import { chatJson } from "../llm";
-import { RouterStep } from "./types";
-
-interface RouterOutput {
-  queryType: "factual" | "comparison" | "synthesis" | "procedural";
-  rewrittenQuery: string;
-  intentSummary: string;
-  needsRetrieval: boolean;
-}
+import { RouterStep, RouterOutputSchema, RouterOutput } from "./types";
+import { Result, success, failure } from "../result";
+import { logger } from "../logger";
+import { ParsingError, ValidationError, BaseApplicationError } from "../errors";
 
 const SYSTEM_PROMPT = `You are the Router agent in a multi-agent research assistant.
 Your job is to analyze the user's question and produce a JSON plan that downstream agents will use.
@@ -44,44 +40,64 @@ Rules:
 export async function runRouterAgent(
   question: string,
   stepId: string,
-): Promise<RouterStep> {
+  requestId: string
+): Promise<Result<RouterStep>> {
   const startedAt = Date.now();
-  let status: RouterStep["status"] = "running";
-  let error: string | undefined;
-  let output: RouterOutput;
+  logger.info("Starting Router Agent", { requestId, agent: "router", stepId });
+
+  if (!question || question.trim().length === 0) {
+    return failure(
+      new ValidationError("EMPTY_QUESTION", "The question cannot be empty.", { requestId, agent: "router" })
+    );
+  }
 
   try {
-    output = await chatJson<RouterOutput>(
+    const rawOutput = await chatJson<unknown>(
       [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: question },
       ],
       { temperature: 0, maxTokens: 300 },
+      requestId,
+      "router"
     );
-    status = "completed";
-  } catch (e: any) {
-    // Fallback: use the raw question as the search query
-    output = {
-      queryType: "factual",
-      rewrittenQuery: question,
-      intentSummary: "Fallback: LLM router failed; using raw question.",
-      needsRetrieval: true,
-    };
-    status = "error";
-    error = e?.message ?? "Unknown router error";
-  }
 
-  const finishedAt = Date.now();
-  return {
-    id: stepId,
-    agent: "router",
-    label: "Analyzing question & rewriting query",
-    startedAt,
-    finishedAt,
-    durationMs: finishedAt - startedAt,
-    status,
-    error,
-    input: { question },
-    output,
-  };
+    // Runtime validation using Zod
+    const parseResult = RouterOutputSchema.safeParse(rawOutput);
+    
+    if (!parseResult.success) {
+      const errorMsg = parseResult.error.errors.map(e => `${e.path.join(".")}: ${e.message}`).join(", ");
+      logger.warn("Router validation failed, using fallback", { requestId, agent: "router", errors: errorMsg });
+      throw new ParsingError("ROUTER_SCHEMA_MISMATCH", `Router output violated schema: ${errorMsg}`, { requestId, agent: "router" });
+    }
+
+    const output = parseResult.data;
+    const finishedAt = Date.now();
+    
+    logger.info("Router Agent completed successfully", { 
+      requestId, agent: "router", durationMs: finishedAt - startedAt, queryType: output.queryType 
+    });
+
+    return success({
+      id: stepId,
+      agent: "router",
+      label: "Analyzing question & rewriting query",
+      startedAt,
+      finishedAt,
+      durationMs: finishedAt - startedAt,
+      status: "completed",
+      input: { question },
+      output,
+    });
+  } catch (e: any) {
+    // If it's already an application error (e.g., InfrastructureError from chatJson), pass it up
+    if (e instanceof BaseApplicationError) {
+      return failure(e);
+    }
+    
+    // Otherwise wrap it in a ParsingError
+    return failure(
+      new ParsingError("ROUTER_UNEXPECTED_ERROR", e?.message ?? "Unknown router error", { requestId, agent: "router" }, e)
+    );
+  }
 }
