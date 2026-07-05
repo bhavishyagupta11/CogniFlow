@@ -16,7 +16,7 @@ export const config = {
     temperature: parseFloat(process.env.LLM_TEMPERATURE || "0.4"),
     topP: parseFloat(process.env.LLM_TOP_P || "1.0"),
     stream: process.env.LLM_STREAM === "true",
-    apiKey: process.env.OPENROUTER_API_KEY || process.env.LLM_API_KEY || "",
+    apiKey: (process.env.OPENROUTER_API_KEY || process.env.LLM_API_KEY || "").trim(),
   },
   vector: {
     provider: process.env.VECTOR_PROVIDER || "local_tfidf",
