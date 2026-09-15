@@ -384,6 +384,11 @@ def delete_document(doc_id: str, owner_id: str = "dev-user") -> bool:
 
     # 4. Remove from vector store
     vector_store.remove_document(doc_id)
+
+    # 5. Invalidate summary cache
+    from backend.services.summary_cache import summary_cache
+    summary_cache.invalidate_document(doc_id)
+
     return True
 
 
@@ -485,6 +490,10 @@ def reindex_document(doc_id: str, owner_id: str = "dev-user") -> Dict[str, Any]:
     target["indexStatus"] = "indexed"
     target["indexed"] = True
     save_manifest(manifest)
+
+    # Invalidate summary cache
+    from backend.services.summary_cache import summary_cache
+    summary_cache.invalidate_document(doc_id)
 
     return {
         "ok": True,
