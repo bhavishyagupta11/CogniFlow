@@ -12,6 +12,8 @@ from backend.config import (
     GEMINI_API_KEY,
     OPENROUTER_API_KEY,
     LLM_MODEL,
+    GEMINI_MODEL,
+    OPENROUTER_MODEL,
     OLLAMA_BASE_URL,
     OLLAMA_MODEL,
 )
@@ -86,7 +88,7 @@ async def stream_llm_response(
     if gemini is not None:
         try:
             full_prompt = f"{effective_system}\n\n{user_prompt}"
-            model_name = os.getenv("LLM_MODEL") or LLM_MODEL or "gemini-3.6-flash"
+            model_name = os.getenv("GEMINI_MODEL") or GEMINI_MODEL
             response = await asyncio.wait_for(
                 gemini.aio.models.generate_content_stream(
                     model=model_name,
@@ -122,7 +124,7 @@ async def stream_llm_response(
             ]
 
             response = await client.chat.completions.create(
-                model=LLM_MODEL or "google/gemini-2.5-flash",
+                model=OPENROUTER_MODEL or "google/gemini-2.5-flash",
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
