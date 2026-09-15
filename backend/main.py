@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from backend.config import PORT, HOST
+from backend.config import PORT, HOST, CORS_ORIGINS
 from backend.api.health import router as health_router
 from backend.api.chat import router as chat_router
 from backend.api.documents import router as documents_router
@@ -19,18 +19,11 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# Enable CORS for React + Vite frontend (port 5173, port 3000, and preview ports)
+# Enable CORS for React + Vite frontend. In production, set CORS_ORIGINS to your
+# Vercel URL(s), comma-separated.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-        "*"
-    ],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
