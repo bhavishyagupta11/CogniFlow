@@ -16,12 +16,12 @@ export function ConfidenceMeter({ confidence, className }) {
         <div className="flex items-center gap-1.5">
           <ShieldCheck className={`h-4 w-4 ${display.colorClass}`}/>
           <span className="font-mono text-[11px] font-bold uppercase tracking-wider text-[var(--text-primary)]">
-            Retrieval Evidence Match
+            Retrieval Evidence Alignment
           </span>
           <TooltipProvider delayDuration={150}>
             <Tooltip>
               <TooltipTrigger asChild>
-                <button type="button" className="text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-help p-0.5 rounded-[2px] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-amber-glow)]" aria-label="Evidence match score explanation">
+                <button type="button" className="text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-help p-0.5 rounded-[2px] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-amber-glow)]" aria-label="Evidence retrieval alignment explanation">
                   <HelpCircle className="h-3.5 w-3.5"/>
                 </button>
               </TooltipTrigger>
@@ -36,8 +36,8 @@ export function ConfidenceMeter({ confidence, className }) {
         </div>
 
         <div className="flex items-center gap-2">
-          <span className={`font-mono text-[10px] font-bold uppercase px-2 py-0.5 rounded-[2px] border ${display.bgClass} ${display.colorClass} ${display.borderClass}`}>
-            {display.tier} Match ({display.percentage}%)
+          <span className={`font-mono text-[10px] font-semibold uppercase ${display.colorClass}`}>
+            {display.tier} Alignment (Score {scoreValue.toFixed(2)})
           </span>
 
           <button type="button" data-testid="confidence-components-toggle" onClick={() => setShowBreakdown((prev) => !prev)} className="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] hover:text-[var(--text-primary)] flex items-center gap-0.5 px-1.5 py-0.5 rounded-[2px] hover:bg-[var(--panel-inner)] transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--accent-amber-glow)] cursor-pointer" aria-expanded={showBreakdown}>
@@ -56,7 +56,7 @@ export function ConfidenceMeter({ confidence, className }) {
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
             <div className="rounded-[2px] border border-[var(--panel-border)] bg-[var(--panel-inner)] p-1.5">
-              <span className="text-[9px] font-mono uppercase text-[var(--text-muted)] block">Top Similarity</span>
+              <span className="text-[9px] font-mono uppercase text-[var(--text-muted)] block">Top Alignment Score</span>
               <span className="font-mono font-medium text-[var(--accent-amber)]">
                 {typeof confidence.topScore === "number" ? confidence.topScore.toFixed(3) : "N/A"}
               </span>

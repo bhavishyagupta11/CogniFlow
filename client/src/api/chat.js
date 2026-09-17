@@ -1,10 +1,16 @@
 import { apiFetch } from "./client";
 import { safeParseSSEEvent } from "../lib/types";
-export async function streamChatQuery({ question, onEvent, signal, mode }) {
+
+export async function streamChatQuery({ question, onEvent, signal, mode, conversationId }) {
     const res = await apiFetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, mode }),
+        body: JSON.stringify({
+            question,
+            mode,
+            conversation_id: conversationId,
+            conversationId: conversationId
+        }),
         signal,
     });
     if (!res.ok) {
@@ -50,4 +56,54 @@ export async function streamChatQuery({ question, onEvent, signal, mode }) {
     finally {
         reader.releaseLock();
     }
+}
+
+export async function apiListConversations() {
+    const res = await apiFetch("/api/chats");
+    if (!res.ok) {
+        throw new Error(`Failed to load conversations (${res.status})`);
+    }
+    return res.json();
+}
+
+export async function apiCreateConversation(data = {}) {
+    const res = await apiFetch("/api/chats", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+        throw new Error(`Failed to create conversation (${res.status})`);
+    }
+    return res.json();
+}
+
+export async function apiGetConversation(convId) {
+    const res = await apiFetch(`/api/chats/${convId}`);
+    if (!res.ok) {
+        throw new Error(`Failed to get conversation (${res.status})`);
+    }
+    return res.json();
+}
+
+export async function apiDeleteConversation(convId) {
+    const res = await apiFetch(`/api/chats/${convId}`, {
+        method: "DELETE",
+    });
+    if (!res.ok) {
+        throw new Error(`Failed to delete conversation (${res.status})`);
+    }
+    return res.json();
+}
+
+export async function apiSaveMessage(convId, { role, content, metadata }) {
+    const res = await apiFetch(`/api/chats/${convId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role, content, metadata }),
+    });
+    if (!res.ok) {
+        throw new Error(`Failed to save message (${res.status})`);
+    }
+    return res.json();
 }

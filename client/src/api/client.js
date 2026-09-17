@@ -10,8 +10,11 @@ function resolveApiUrl(path) {
 }
 
 export async function apiFetch(path, options = {}) {
-    const { userId, accessKey } = useAuthStore.getState();
+    const { token, userId, accessKey } = useAuthStore.getState();
     const headers = new Headers(options.headers || {});
+    if (token && !headers.has("Authorization")) {
+        headers.set("Authorization", `Bearer ${token}`);
+    }
     if (userId && !headers.has("x-user-id")) {
         headers.set("x-user-id", userId);
     }

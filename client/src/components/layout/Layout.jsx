@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Outlet } from "react-router-dom";
-import { BlockySidebar } from "./BlockySidebar";
+import { Sidebar } from "./Sidebar";
 import { ArchitectureDialog } from "@/components/rag/architecture-dialog";
 import { PdfViewer } from "@/components/rag/pdf-viewer";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -23,8 +23,8 @@ export function Layout() {
         />
       )}
 
-      {/* Blocky Left Sidebar */}
-      <BlockySidebar
+      {/* Navigation Sidebar */}
+      <Sidebar
         isCollapsed={isCollapsed}
         setIsCollapsed={setIsCollapsed}
         isMobileOpen={isMobileOpen}
@@ -50,7 +50,7 @@ export function Layout() {
         </header>
 
         {/* Content Viewport */}
-        <main className="flex-1 min-h-0 flex flex-col overflow-hidden relative blocky-grid">
+        <main className="flex-1 min-h-0 flex flex-col overflow-hidden relative cogniflow-grid">
           <Outlet />
         </main>
       </div>

@@ -18,7 +18,7 @@ export function normalizeArray(val) {
     }
     if (Array.isArray(val)) {
         return val
-            .map((item) => (item !== null && item !== undefined ? String(item).trim() : ""))
+            .flatMap((item) => (item !== null && item !== undefined ? normalizeArray(item) : []))
             .filter(Boolean);
     }
     if (typeof val === "string") {
@@ -26,10 +26,15 @@ export function normalizeArray(val) {
         return trimmed ? [trimmed] : [];
     }
     if (typeof val === "object") {
-        return Object.values(val)
-            .map((item) => (item !== null && item !== undefined ? String(item).trim() : ""))
-            .filter(Boolean);
+        try {
+            return Object.values(val)
+                .flatMap((item) => (item !== null && item !== undefined ? normalizeArray(item) : []))
+                .filter(Boolean);
+        } catch {
+            return [];
+        }
     }
-    return [String(val).trim()].filter(Boolean);
+    const str = String(val).trim();
+    return str ? [str] : [];
 }
 
