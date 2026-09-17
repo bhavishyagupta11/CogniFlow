@@ -370,11 +370,14 @@ class VectorStore:
 
     def add_document(self, doc_id: str, title: str, pages: List[Dict[str, Any]], owner_id: str = "dev-user"):
         """Adds a newly processed document and rebuilds the vector index."""
-        extracted_file = EXTRACTED_DIR / f"{doc_id}.json"
-        try:
-            extracted_file.write_text(json.dumps(pages, indent=2), encoding="utf-8")
-        except Exception as e:
-            print(f"[VectorStore] Failed to write extracted file {extracted_file}: {e}")
+        is_guest = bool(owner_id and owner_id.startswith("guest_"))
+        if not is_guest:
+            extracted_file = EXTRACTED_DIR / f"{doc_id}.json"
+            try:
+                extracted_file.write_text(json.dumps(pages, indent=2), encoding="utf-8")
+            except Exception as e:
+                print(f"[VectorStore] Failed to write extracted file {extracted_file}: {e}")
+
         self.in_memory_docs[doc_id] = {
             "id": doc_id,
             "title": title,
@@ -384,12 +387,15 @@ class VectorStore:
             "tenantId": owner_id,
             "tenant_id": owner_id
         }
-        try:
-            from backend.services.db_service import db_service
-            sem_chunks = semantic_chunk_document(pages, doc_id, title)
-            db_service.save_chunks(doc_id, sem_chunks)
-        except Exception:
-            pass
+
+        if not is_guest:
+            try:
+                from backend.services.db_service import db_service
+                sem_chunks = semantic_chunk_document(pages, doc_id, title)
+                db_service.save_chunks(doc_id, sem_chunks)
+            except Exception:
+                pass
+
         self._rebuild()
 
     def remove_document(self, doc_id: str):

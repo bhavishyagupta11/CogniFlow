@@ -384,15 +384,18 @@ async def hierarchical_summarize_document(
             "cached": False
         })
 
-    # 3. Load pages from pages_override or data/extracted/{doc_id}.json
+    # 3. Load pages from pages_override, in-memory store, or data/extracted/{doc_id}.json
     pages: List[Dict[str, Any]] = list(pages_override) if pages_override else []
     if not pages:
-        extracted_path = EXTRACTED_DIR / f"{doc_id}.json"
-        if extracted_path.exists():
-            try:
-                pages = json.loads(extracted_path.read_text(encoding="utf-8"))
-            except Exception as e:
-                print(f"[Summarizer] Failed to load extracted json: {e}")
+        if doc_id in vector_store.in_memory_docs:
+            pages = list(vector_store.in_memory_docs[doc_id].get("pages", []))
+        if not pages:
+            extracted_path = EXTRACTED_DIR / f"{doc_id}.json"
+            if extracted_path.exists():
+                try:
+                    pages = json.loads(extracted_path.read_text(encoding="utf-8"))
+                except Exception as e:
+                    print(f"[Summarizer] Failed to load extracted json: {e}")
 
     # Fallback to chunk grouping if extracted JSON is not available
     if not pages:

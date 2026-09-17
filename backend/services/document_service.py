@@ -274,7 +274,8 @@ async def ingest_file(
     # 6. Semantic chunking with complete provenance
     doc_id = str(uuid.uuid4())
     stored_filename = f"{doc_id}{ext}"
-    stored_path = UPLOADS_DIR / stored_filename
+    stored_path: Optional[Path] = None
+    extracted_path: Optional[Path] = None
     r2_upload_key = f"uploads/{doc_id}/original"
     r2_extracted_key = f"extracted/{doc_id}/pages.json"
 
@@ -347,6 +348,7 @@ async def ingest_file(
         except Exception as e:
             logger.warning(f"[DocumentService] Storage service write warning: {e}")
 
+        stored_path = UPLOADS_DIR / stored_filename
         try:
             stored_path.write_bytes(unlocked_bytes)
         except Exception as e:
@@ -376,7 +378,7 @@ async def ingest_file(
         manifest.append(new_entry)
         save_manifest(manifest)
     else:
-        # Temporary in-memory persistence for guests
+        # Temporary in-memory persistence for guests (zero durable disk, DB, or R2 writes)
         from backend.services.guest_session_service import guest_session_service
         guest_session_service.add_document(
             session_id=owner_id,
@@ -398,7 +400,19 @@ async def ingest_file(
         print(f"[DocumentService] Non-fatal: background summary precomputation scheduling error: {e}")
 
     # 11. Run retrieval smoke test against the newly indexed document
-    smoke_test_query = pages[0].get("text", "")[:80].strip() or safe_filename
+    import re
+    first_page_text = pages[0].get("text", "") if pages else ""
+    tokens = re.findall(r"\b[a-zA-Z0-9_]{2,}\b", first_page_text)
+    if tokens:
+        smoke_test_query = " ".join(tokens[:6])
+    else:
+        all_text = " ".join(p.get("text", "") for p in pages)
+        all_tokens = re.findall(r"\b[a-zA-Z0-9_]{2,}\b", all_text)
+        if all_tokens:
+            smoke_test_query = " ".join(all_tokens[:6])
+        else:
+            smoke_test_query = safe_filename
+
     smoke_candidates = vector_store.search(
         query=smoke_test_query,
         k=1,
@@ -412,14 +426,35 @@ async def ingest_file(
     )
 
     if not smoke_passed:
-        print(f"[DocumentService] CRITICAL: Ingestion smoke test failed for {doc_id} ({safe_filename}). Rolling back.")
-        # Roll back manifest, disk files, and vector store
-        if stored_path.exists():
-            stored_path.unlink(missing_ok=True)
-        if extracted_path.exists():
-            extracted_path.unlink(missing_ok=True)
-        manifest = [m for m in manifest if m.get("id") != doc_id]
-        save_manifest(manifest)
+        logger.error(f"[DocumentService] CRITICAL: Ingestion smoke test failed for {doc_id} ({safe_filename}). Rolling back.")
+        if is_authenticated:
+            # Roll back durable storage, database records, and manifest
+            if stored_path is not None and stored_path.exists():
+                stored_path.unlink(missing_ok=True)
+            if extracted_path is not None and extracted_path.exists():
+                extracted_path.unlink(missing_ok=True)
+            try:
+                manifest = get_manifest()
+                manifest = [m for m in manifest if m.get("id") != doc_id]
+                save_manifest(manifest)
+            except Exception as e:
+                logger.warning(f"[DocumentService] Manifest rollback warning: {e}")
+            try:
+                from backend.services.db_service import db_service
+                db_service.delete_document(doc_id)
+            except Exception as e:
+                logger.warning(f"[DocumentService] DB rollback warning: {e}")
+            try:
+                from backend.services.storage_service import storage_service
+                storage_service.delete_object(r2_upload_key)
+                storage_service.delete_object(r2_extracted_key)
+            except Exception as e:
+                logger.warning(f"[DocumentService] Storage rollback warning: {e}")
+        else:
+            # Guest session rollback: purely in-memory, zero durable operations
+            from backend.services.guest_session_service import guest_session_service
+            guest_session_service.delete_document(owner_id, doc_id)
+
         vector_store.remove_document(doc_id)
         return {
             "ok": False,
