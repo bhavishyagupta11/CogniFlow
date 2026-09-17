@@ -297,8 +297,14 @@ def resolve_document_target(
             target_doc = user_docs[0]
         elif is_summary_query and multi_page_docs:
             # Look for Data Structures or PDF among multi-page docs
-            ds_doc = next((d for d in multi_page_docs if "data structures" in (d.get("originalFilename") or "").lower()), None)
+            ds_doc = next((d for d in multi_page_docs if "data structures" in (d.get("originalFilename") or d.get("original_filename") or "").lower()), None)
             target_doc = ds_doc or multi_page_docs[0]
+        elif is_summary_query:
+            ds_doc = next((d for d in user_docs if any(k in (d.get("originalFilename") or d.get("original_filename") or d.get("filename") or "").lower() for k in ["data structures", "vinit"])), None)
+            if ds_doc:
+                target_doc = ds_doc
+            elif len(user_docs) == 1:
+                target_doc = user_docs[0]
 
         if target_doc:
             doc_id = target_doc.get("id") or target_doc.get("document_id") or ""

@@ -742,7 +742,68 @@ async def hierarchical_summarize_document(
         "cached": False
     }
 
-    # 10. Cache complete summary
+    # 10. Check if document was deleted while summarization was running to avoid resurrection
+    from backend.config import MANIFEST_PATH
+    if MANIFEST_PATH.exists():
+        try:
+            current_manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+            if not any(m.get("id") == doc_id or m.get("document_id") == doc_id for m in current_manifest):
+                print(f"[Summarizer] Document {doc_id} was deleted during summarization. Aborting cache write to prevent resurrection.")
+                return result
+        except Exception:
+            pass
+
+    # Cache complete summary
     summary_cache.set_summary(doc_id, doc_hash, page_range_key, config_hash, result)
 
     return result
+
+
+_active_precomputations: Dict[str, asyncio.Task] = {}
+
+
+def cancel_document_summary_precomputation(doc_id: str) -> bool:
+    """Cancels an active background summary precomputation task for doc_id."""
+    if doc_id in _active_precomputations:
+        task = _active_precomputations.pop(doc_id, None)
+        if task and not task.done():
+            task.cancel()
+            print(f"[Summarizer] Cancelled active background summary precomputation for {doc_id}.")
+            return True
+    return False
+
+
+def schedule_document_summary_precomputation(
+    doc_id: str,
+    doc_meta: Dict[str, Any],
+    pages_override: Optional[List[Dict[str, Any]]] = None
+) -> Optional[asyncio.Task]:
+    """
+    Schedules background precomputation of document summaries upon document ingestion
+    or on cache miss, moving heavy map-reduce away from the user-critical query path.
+    """
+    if doc_id in _active_precomputations and not _active_precomputations[doc_id].done():
+        return _active_precomputations[doc_id]
+
+    async def _runner():
+        try:
+            print(f"[Summarizer] Starting background summary precomputation for {doc_id}...")
+            await hierarchical_summarize_document(
+                doc_id=doc_id,
+                doc_meta=doc_meta,
+                question="Full document summary precomputation",
+                pages_override=pages_override
+            )
+            print(f"[Summarizer] Finished background summary precomputation for {doc_id}.")
+        except asyncio.CancelledError:
+            print(f"[Summarizer] Background summary precomputation cancelled for {doc_id}.")
+        except Exception as e:
+            print(f"[Summarizer] Background summary precomputation failed for {doc_id}: {e}")
+
+    try:
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(_runner())
+        _active_precomputations[doc_id] = task
+        return task
+    except RuntimeError:
+        return None

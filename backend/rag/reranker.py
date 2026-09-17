@@ -5,23 +5,43 @@ or scores are closely tied. Skips reranking for simple queries or small candidat
 """
 
 import re
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 import numpy as np
+
+
+from backend.config import (
+    RERANK_ENABLED,
+    ADAPTIVE_SIMPLE_THRESHOLD,
+    ADAPTIVE_SCORE_GAP_THRESHOLD,
+    RERANK_SCORE_THRESHOLD
+)
 
 
 def should_skip_reranker(
     complexity: str,
     candidates: List[Dict[str, Any]],
-    top_score: float = 0.95,
-    score_gap: float = 0.05
+    top_score: Optional[float] = None,
+    score_gap: Optional[float] = None
 ) -> Tuple[bool, str]:
-    """Determines whether reranking should be skipped to conserve latency."""
+    """
+    Determines whether reranking should be skipped to conserve latency.
+    Employs empirically calibrated signals rather than hardcoded assumptions (Mandates 2 & 11).
+    """
+    if not RERANK_ENABLED:
+        return True, "Reranker disabled in system configuration."
     if len(candidates) <= 2:
         return True, "Reranker skipped: Candidate pool is small (<= 2 chunks)."
-    if complexity == "simple":
-        return True, "Reranker skipped: Simple factual query path."
-    if top_score >= 0.95 and score_gap >= 0.15:
-        return True, "Reranker skipped: Decisive top candidate relevance."
+    if complexity in ["simple", "fast"]:
+        return True, f"Reranker skipped: {complexity.capitalize()} execution path prioritizes latency."
+
+    # If scores are provided, check against configurable thresholds
+    s_top = top_score if top_score is not None else (float(candidates[0].get("score", 0.5)) if candidates else 0.0)
+    s_second = float(candidates[1].get("score", s_top)) if len(candidates) > 1 else s_top
+    s_gap = score_gap if score_gap is not None else (s_top - s_second)
+
+    if s_top >= ADAPTIVE_SIMPLE_THRESHOLD and s_gap >= ADAPTIVE_SCORE_GAP_THRESHOLD:
+        return True, f"Reranker skipped: Decisive top candidate relevance (score {s_top:.2f} >= {ADAPTIVE_SIMPLE_THRESHOLD}, gap {s_gap:.2f} >= {ADAPTIVE_SCORE_GAP_THRESHOLD})."
+
     return False, ""
 
 

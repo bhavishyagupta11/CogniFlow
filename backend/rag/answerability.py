@@ -68,7 +68,6 @@ def detect_answerability(
                     has_neg_1 = bool(re.search(neg_pattern, c1_text))
 
                     if (has_pos_1 and has_neg_2) or (has_pos_2 and has_neg_1):
-                        # Verify that both chunks mention at least one common query subject
                         shared_subjects = [t for t in key_tokens if t in c1_text and t in c2_text]
                         if shared_subjects:
                             id_i = sources[i].get("chunkId", sources[i].get("id", f"chunk-{i}"))
@@ -80,53 +79,59 @@ def detect_answerability(
                                 supportingChunkIds=[id_i, id_j],
                                 missingInformation=[],
                                 conflictingChunkIds=[id_i, id_j],
+                                coveredConcepts=shared_subjects,
+                                missingConcepts=[],
                                 reason=f"Heuristic contradiction detected regarding '{shared_subjects[0]}' between retrieved passages."
                             )
 
-    # 2. Coverage calculation
-    matched_tokens = [t for t in key_tokens if t in corpus_text]
-    coverage = len(matched_tokens) / max(len(key_tokens), 1)
+    # 2. Multi-Concept Coverage & Requirement Gating
+    from backend.rag.concept_coverage import analyze_concept_coverage
+    concept_res = analyze_concept_coverage(question, sources)
 
-    supporting_ids = [
-        s.get("chunkId", s.get("id", ""))
-        for s in sources
-        if any(t in s.get("chunkContent", s.get("content", "")).lower() for t in matched_tokens)
-    ]
-    if not supporting_ids:
+    # Gather supporting chunks that actually support covered concepts
+    supporting_ids = []
+    for concept in concept_res.covered_concepts:
+        supporting_ids.extend(concept_res.concept_support.get(concept, []))
+    supporting_ids = list(dict.fromkeys(supporting_ids))
+    if not supporting_ids and concept_res.status != "not_answerable":
         supporting_ids = [s.get("chunkId", s.get("id", "")) for s in sources]
 
-    if coverage >= 0.70:
+    if concept_res.status == "fully_answerable":
         return AnswerabilityResult(
             status="fully_answerable",
             answerable=True,
-            confidence=round(0.85 + (coverage * 0.14), 2),
+            confidence=round(0.85 + (concept_res.coverage_ratio * 0.14), 2),
             supportingChunkIds=supporting_ids,
             missingInformation=[],
             conflictingChunkIds=[],
-            reason="High key-term overlap and factual support present in retrieved chunks."
+            coveredConcepts=concept_res.covered_concepts,
+            missingConcepts=[],
+            reason=concept_res.reason
         )
 
-    if coverage >= 0.35:
-        missing = [t for t in key_tokens if t not in matched_tokens]
+    if concept_res.status == "partially_answerable":
         return AnswerabilityResult(
             status="partially_answerable",
             answerable=True,
-            confidence=round(0.50 + (coverage * 0.30), 2),
+            confidence=round(0.50 + (concept_res.coverage_ratio * 0.30), 2),
             supportingChunkIds=supporting_ids,
-            missingInformation=missing[:5] if missing else ["Partial context available"],
+            missingInformation=concept_res.missing_concepts,
             conflictingChunkIds=[],
-            reason=f"Corpus provides partial context but lacks coverage for: {', '.join(missing[:3]) if missing else 'query aspects'}."
+            coveredConcepts=concept_res.covered_concepts,
+            missingConcepts=concept_res.missing_concepts,
+            reason=concept_res.reason
         )
 
-    missing = [t for t in key_tokens if t not in matched_tokens]
     return AnswerabilityResult(
         status="not_answerable",
         answerable=False,
-        confidence=0.25,
+        confidence=0.20,
         supportingChunkIds=[],
-        missingInformation=missing[:5] if missing else ["Query terms are absent from the indexed literature."],
+        missingInformation=concept_res.missing_concepts or ["Requested concepts are absent from the indexed literature."],
         conflictingChunkIds=[],
-        reason="Query terms are absent from the indexed literature."
+        coveredConcepts=[],
+        missingConcepts=concept_res.missing_concepts or key_tokens[:3],
+        reason=concept_res.reason or "Requested concepts are absent from the indexed literature."
     )
 
 

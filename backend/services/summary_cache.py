@@ -39,17 +39,27 @@ class SummaryCache:
     ) -> Optional[Dict[str, Any]]:
         key = self._make_key(doc_id, doc_hash, page_range, config_hash)
         
-        # 1. In-memory check
+        # 1. In-memory check (L1 cache)
         if key in self._in_memory:
             entry = self._in_memory[key]
             return entry.get("data")
 
-        # 2. Disk cache check
+        # 2. Database check (PostgreSQL / Supabase - Authoritative Persistence across restarts)
+        try:
+            from backend.services.db_service import db_service
+            db_summary = db_service.get_summary(key)
+            if db_summary:
+                self._in_memory[key] = {"data": db_summary, "cached_at": time.time(), "doc_id": doc_id}
+                return db_summary
+        except Exception:
+            pass
+
+        # 3. Disk cache fallback
         disk_file = CACHE_DIR / f"{key}.json"
         if disk_file.exists():
             try:
                 data = json.loads(disk_file.read_text(encoding="utf-8"))
-                self._in_memory[key] = {"data": data, "cached_at": time.time()}
+                self._in_memory[key] = {"data": data, "cached_at": time.time(), "doc_id": doc_id}
                 return data
             except Exception as e:
                 print(f"[SummaryCache] Failed to read disk cache {disk_file}: {e}")
@@ -66,14 +76,21 @@ class SummaryCache:
     ) -> None:
         key = self._make_key(doc_id, doc_hash, page_range, config_hash)
         
-        # In-memory store
+        # 1. In-memory store
         self._in_memory[key] = {
             "doc_id": doc_id,
             "data": data,
             "cached_at": time.time()
         }
 
-        # Disk store
+        # 2. Database persistent store (Survives Render restarts)
+        try:
+            from backend.services.db_service import db_service
+            db_service.save_summary(key, doc_id, page_range, config_hash, data)
+        except Exception as e:
+            pass
+
+        # 3. Disk store (for offline local development)
         disk_file = CACHE_DIR / f"{key}.json"
         try:
             payload = dict(data)
@@ -86,7 +103,7 @@ class SummaryCache:
             }
             disk_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         except Exception as e:
-            print(f"[SummaryCache] Failed to write disk cache {disk_file}: {e}")
+            pass
 
     def get_batch_summary(self, doc_id: str, doc_hash: str, batch_id: str) -> Optional[str]:
         batch_key = self._make_batch_key(doc_id, doc_hash, batch_id)
@@ -114,16 +131,23 @@ class SummaryCache:
             pass
 
     def invalidate_document(self, doc_id: str) -> int:
-        """Invalidates all cached summaries for a specific document ID."""
+        """Invalidates all cached summaries for a specific document ID across memory, DB, and disk."""
         invalidated = 0
         
-        # Invalidate in-memory
+        # 1. Invalidate in-memory
         to_del = [k for k, v in self._in_memory.items() if v.get("doc_id") == doc_id or v.get("data", {}).get("documentId") == doc_id]
         for k in to_del:
             self._in_memory.pop(k, None)
             invalidated += 1
 
-        # Invalidate disk files
+        # 2. Invalidate database summaries
+        try:
+            from backend.services.db_service import db_service
+            db_service.delete_summaries_for_document(doc_id)
+        except Exception:
+            pass
+
+        # 3. Invalidate disk files
         if CACHE_DIR.exists():
             for f in CACHE_DIR.glob("*.json"):
                 try:
