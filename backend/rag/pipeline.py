@@ -43,6 +43,7 @@ from backend.config import (
     PRIMARY_MODEL,
     MAX_VERIFY_ITERATIONS
 )
+from backend.rag.identity import build_system_prompt
 
 
 def sse_event(data: Dict[str, Any]) -> str:
@@ -124,9 +125,10 @@ async def run_rag_pipeline(
             "model": PRIMARY_MODEL
         })
 
-        system_prompt = (
-            "You are CogniFlow, a thoughtful, precise, and technical AI coding & engineering assistant. "
-            "Provide helpful, accurate, and direct responses."
+        system_prompt = build_system_prompt(
+            "You are a thoughtful, precise, and technical AI assistant. "
+            "Provide helpful, accurate, and direct responses.",
+            is_rag=False
         )
 
         full_answer = ""
@@ -905,8 +907,8 @@ async def run_rag_pipeline(
     if answerability_model.status == "partially_answerable":
         covered_str = ", ".join(answerability_model.coveredConcepts) if answerability_model.coveredConcepts else "the supported concepts"
         missing_str = ", ".join(answerability_model.missingConcepts) if answerability_model.missingConcepts else "the missing concepts"
-        system_prompt = (
-            "You are CogniFlow Adaptive RAG assistant. Your primary directive is STRICT EVIDENCE GROUNDING.\n\n"
+        system_prompt = build_system_prompt(
+            "Your primary directive is STRICT EVIDENCE GROUNDING.\n\n"
             f"The uploaded document contains evidence ONLY for: {covered_str}.\n"
             f"The uploaded document contains ZERO evidence for: {missing_str}.\n\n"
             "MANDATORY INSTRUCTIONS:\n"
@@ -914,7 +916,8 @@ async def run_rag_pipeline(
             f"2. Cite your claims about {covered_str} using [E1], [E2], etc. matching the Evidence passages.\n"
             f"3. For {missing_str}: Explicitly state: 'The selected corpus does not contain sufficient evidence about {missing_str}.'\n"
             f"4. ABSOLUTE PROHIBITION: Do NOT define, explain, or hypothesize about {missing_str} from general knowledge. Do NOT substitute other data structures (like linked lists or sorting algorithms)."
-            f"{CITATION_RULES}"
+            f"{CITATION_RULES}",
+            is_rag=True
         )
         user_prompt = (
             f"User Question: {question}\n\n"
@@ -926,31 +929,34 @@ async def run_rag_pipeline(
             "Answer:"
         )
     elif user_mode == "fast":
-        system_prompt = (
-            "You are CogniFlow FAST answering engine. Provide a concise, directly grounded answer "
+        system_prompt = build_system_prompt(
+            "You are operating in FAST answering mode. Provide a concise, directly grounded answer "
             "using ONLY the provided Evidence passages.\n"
             "Cite your claims inline using [E1], [E2], etc. corresponding strictly to the Evidence IDs.\n"
             "Do NOT extrapolate or invent facts outside the evidence."
-            f"{CITATION_RULES}"
+            f"{CITATION_RULES}",
+            is_rag=True
         )
         user_prompt = f"Question: {question}\n\nEvidence:\n{full_context}\n\nRemember to cite claims with [E1], [E2] inline.\n\nAnswer:"
     elif execution_complexity == "deep_research":
-        system_prompt = (
-            "You are CogniFlow Deep Research synthesizer. Conduct a comprehensive, analytical, "
+        system_prompt = build_system_prompt(
+            "You are operating in Deep Research synthesis mode. Conduct a comprehensive, analytical, "
             "evidence-grounded synthesis answering the user query using ONLY the provided Evidence passages.\n"
             "Structure your analysis clearly with headings and bullet points.\n"
             "Cite every claim inline using [E1], [E2], etc. directly mapping to the supporting Evidence IDs.\n"
             "Do NOT include outside knowledge or ungrounded facts."
-            f"{CITATION_RULES}"
+            f"{CITATION_RULES}",
+            is_rag=True
         )
         user_prompt = f"Question: {question}\n\nEvidence:\n{full_context}\n\nRemember to cite claims with [E1], [E2] inline.\n\nAnswer:"
     else:
-        system_prompt = (
-            "You are CogniFlow Adaptive RAG assistant. Provide an accurate, clear, and rigorously grounded answer "
+        system_prompt = build_system_prompt(
+            "You are operating in Adaptive RAG mode. Provide an accurate, clear, and rigorously grounded answer "
             "to the user question using ONLY the provided Evidence passages.\n"
             "Cite claims inline using [E1], [E2], etc. referencing the matching Evidence passages.\n"
             "If the evidence is partially sufficient, explicitly state what is missing and do NOT substitute other concepts."
-            f"{CITATION_RULES}"
+            f"{CITATION_RULES}",
+            is_rag=True
         )
         user_prompt = f"Question: {question}\n\nEvidence:\n{full_context}\n\nRemember to cite claims with [E1], [E2] inline.\n\nAnswer:"
 

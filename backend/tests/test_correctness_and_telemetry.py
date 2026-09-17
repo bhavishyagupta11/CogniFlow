@@ -204,8 +204,9 @@ async def test_backend_lifecycle_sse_event_stream():
     """
     events = []
     async for raw in run_rag_pipeline(
-        question="What is an array in data structures?",
-        mode="fast"
+        question="What is self-attention mechanism in Transformer architectures?",
+        mode="fast",
+        document_id="doc-attention-2017"
     ):
         if raw.startswith("data: "):
             try:
@@ -233,7 +234,22 @@ async def test_backend_lifecycle_sse_event_stream():
     assert "mode" in req_started_evt
 
 
-def test_lsa_semantic_retrieval_and_labeling():
+@pytest.fixture
+def ensure_lsa_64d():
+    """Ensures index has >= 65 chunks so LSA 64-dimensional SVD projection is deterministic."""
+    added = False
+    if vector_store.total_docs < 65:
+        pages = [{"pageNumber": i, "text": f"Deterministic section {i} for LSA concept projection testing with unique vocabulary term_{i}."} for i in range(1, 70)]
+        vector_store.add_document("doc-test-lsa-telemetry", "Deterministic LSA Test Document", pages)
+        added = True
+    try:
+        yield
+    finally:
+        if added:
+            vector_store.remove_document("doc-test-lsa-telemetry")
+
+
+def test_lsa_semantic_retrieval_and_labeling(ensure_lsa_64d):
     """
     TEST 5 & 7: Semantic Retrieval Labeling and TF-IDF Query Scaling.
     Verifies that vector_store:

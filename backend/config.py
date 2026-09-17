@@ -41,6 +41,12 @@ LLM_MODEL = os.getenv("LLM_MODEL", PRIMARY_MODEL)
 GEMINI_MODEL = PRIMARY_MODEL
 OPENROUTER_MODEL = SECONDARY_MODEL
 
+# Application Identity & Attribution Metadata (Canonical)
+APPLICATION_NAME = "CogniFlow"
+DEVELOPER_NAME = "Bhavishya Gupta"
+MODEL_PROVIDER_LABEL = os.getenv("MODEL_PROVIDER_LABEL", "Google Gemini")
+AI_PROVIDER_NAME = "Google"
+
 # RAG & Adaptive Pipeline Configurable Thresholds (Configurable per Mandate 2 & 3)
 RETRIEVAL_TOP_K = int(os.getenv("RETRIEVAL_TOP_K", "6"))
 RETRIEVAL_STRATEGY = os.getenv("RETRIEVAL_STRATEGY", "hybrid").lower().strip()  # hybrid | lexical | semantic

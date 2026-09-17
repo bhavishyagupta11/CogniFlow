@@ -11,6 +11,8 @@ Validates Section 19 Requirements:
 
 import pytest
 import re
+import uuid
+import time
 from backend.rag.citations import CitationAssembler, citation_assembler
 from backend.services.db_service import (
     create_user,
@@ -110,49 +112,62 @@ def test_citation_extraction_from_streamed_fragments():
 
 def test_persisted_citation_metadata():
     """Verifies that citations and evidence mapping are saved and restored in conversation messages."""
-    user_id = f"user_cite_test_{id(test_persisted_citation_metadata)}"
-    create_user(email="cite_test@cogniflow.test", name="Citation Tester", password_hash="dummyhash", user_id=user_id)
+    unique_suffix = f"{uuid.uuid4().hex[:8]}_{int(time.time() * 1000)}"
+    user_id = f"user_cite_test_{unique_suffix}"
+    email = f"cite_test_{unique_suffix}@cogniflow.test"
+    create_user(email=email, name="Citation Tester", password_hash="dummyhash", user_id=user_id)
     conv = create_conversation(user_id=user_id, title="Citation Persistence Test", mode="adaptive_rag")
     conv_id = conv["id"]
 
-    mock_citations = [
-        {
-            "id": "cite-1",
-            "badge": "E1",
-            "evidenceId": "E1",
-            "documentId": "doc-persisted",
-            "documentTitle": "Database Internals",
-            "pageStart": 42,
-            "pageEnd": 42,
-            "excerpt": "B-trees maintain sorted keys.",
-            "score": 0.94,
-            "verified": True
+    try:
+        mock_citations = [
+            {
+                "id": "cite-1",
+                "badge": "E1",
+                "evidenceId": "E1",
+                "documentId": "doc-persisted",
+                "documentTitle": "Database Internals",
+                "pageStart": 42,
+                "pageEnd": 42,
+                "excerpt": "B-trees maintain sorted keys.",
+                "score": 0.94,
+                "verified": True
+            }
+        ]
+
+        metadata = {
+            "sources": [{"chunkId": "c1", "documentId": "doc-persisted", "badge": "E1"}],
+            "citations": mock_citations,
+            "totalDurationMs": 1200
         }
-    ]
 
-    metadata = {
-        "sources": [{"chunkId": "c1", "documentId": "doc-persisted", "badge": "E1"}],
-        "citations": mock_citations,
-        "totalDurationMs": 1200
-    }
+        saved_msg = save_message(
+            conv_id=conv_id,
+            user_id=user_id,
+            role="assistant",
+            content="B-trees are balanced search trees [E1].",
+            metadata=metadata
+        )
+        assert saved_msg is not None
 
-    saved_msg = save_message(
-        conv_id=conv_id,
-        user_id=user_id,
-        role="assistant",
-        content="B-trees are balanced search trees [E1].",
-        metadata=metadata
-    )
-    assert saved_msg is not None
+        loaded_conv = get_conversation(conv_id=conv_id, user_id=user_id)
+        assert loaded_conv is not None
+        assert len(loaded_conv["messages"]) == 1
 
-    loaded_conv = get_conversation(conv_id=conv_id, user_id=user_id)
-    assert loaded_conv is not None
-    assert len(loaded_conv["messages"]) == 1
-
-    loaded_msg = loaded_conv["messages"][0]
-    assert loaded_msg["content"] == "B-trees are balanced search trees [E1]."
-    assert "citations" in loaded_msg
-    assert len(loaded_msg["citations"]) == 1
-    assert loaded_msg["citations"][0]["badge"] == "E1"
-    assert loaded_msg["citations"][0]["pageStart"] == 42
-    assert loaded_msg["citations"][0]["excerpt"] == "B-trees maintain sorted keys."
+        loaded_msg = loaded_conv["messages"][0]
+        assert loaded_msg["content"] == "B-trees are balanced search trees [E1]."
+        assert "citations" in loaded_msg
+        assert len(loaded_msg["citations"]) == 1
+        assert loaded_msg["citations"][0]["badge"] == "E1"
+        assert loaded_msg["citations"][0]["pageStart"] == 42
+        assert loaded_msg["citations"][0]["excerpt"] == "B-trees maintain sorted keys."
+    finally:
+        try:
+            from backend.services.db_service import db_service
+            with db_service.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM messages WHERE conversation_id = %s", (conv_id,))
+                    cur.execute("DELETE FROM conversations WHERE id = %s", (conv_id,))
+                    cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+        except Exception:
+            pass

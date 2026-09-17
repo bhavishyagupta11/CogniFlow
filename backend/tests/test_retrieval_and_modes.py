@@ -18,8 +18,23 @@ from backend.rag.pipeline import run_rag_pipeline
 from backend.services.llm_provider import ProviderManager, BaseLLMProvider
 
 
+@pytest.fixture
+def ensure_lsa_64d():
+    """Ensures index has >= 65 chunks so LSA 64-dimensional SVD projection is deterministic."""
+    added = False
+    if vector_store.total_docs < 65:
+        pages = [{"pageNumber": i, "text": f"Deterministic section {i} for LSA concept projection testing with unique vocabulary term_{i}."} for i in range(1, 70)]
+        vector_store.add_document("doc-test-lsa-retrieval", "Deterministic LSA Test Document", pages)
+        added = True
+    try:
+        yield
+    finally:
+        if added:
+            vector_store.remove_document("doc-test-lsa-retrieval")
+
+
 @pytest.mark.anyio
-async def test_vector_store_strategies_and_unclamped_scores():
+async def test_vector_store_strategies_and_unclamped_scores(ensure_lsa_64d):
     """Verifies that lexical, semantic, and hybrid retrieval produce truthful unclamped scores."""
     query = "binary search time complexity"
     
