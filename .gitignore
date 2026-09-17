@@ -18,7 +18,7 @@ venv/
 
 # Runtime data and uploads
 data/
-db/
+/db/
 *.sqlite
 *.sqlite3
 
