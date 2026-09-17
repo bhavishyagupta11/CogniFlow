@@ -11,23 +11,29 @@ class ChatQueryRequest(BaseModel):
     question: Optional[str] = None
     message: Optional[str] = None
     query: Optional[str] = None
-    mode: Optional[str] = "deep_research"  # deep_research | fast_chat | github_scout | live_web
+    mode: Optional[str] = "adaptive_rag"  # fast | adaptive_rag | deep_research | general_chat
     document_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    conversationId: Optional[str] = None
+    sync: Optional[bool] = False
 
     def get_question(self) -> str:
         return (self.question or self.message or self.query or "").strip()
 
+    def get_conversation_id(self) -> Optional[str]:
+        return (self.conversation_id or self.conversationId or None)
+
 
 class QueryComplexityDecision(BaseModel):
-    complexity: Literal["simple", "standard", "complex", "high_risk", "document_list_extraction", "document_summary"]
+    complexity: str = "simple"
     needs_query_rewrite: bool = False
     needs_decomposition: bool = False
     needs_reranking: bool = False
     needs_critic: bool = False
-    max_candidates: int = 3
+    max_candidates: int = 5
     max_subqueries: int = 1
     time_budget_ms: int = 3000
-    reason: str
+    reason: str = ""
 
 
 class DocumentItem(BaseModel):
@@ -137,6 +143,8 @@ class AnswerabilityResult(BaseModel):
     supportingChunkIds: List[str] = Field(default_factory=list)
     missingInformation: List[str] = Field(default_factory=list)
     conflictingChunkIds: List[str] = Field(default_factory=list)
+    coveredConcepts: List[str] = Field(default_factory=list)
+    missingConcepts: List[str] = Field(default_factory=list)
     reason: str = "Direct empirical grounding identified in corpus"
 
     @field_validator("missingInformation", mode="before")
@@ -207,3 +215,45 @@ class EvaluationMetrics(BaseModel):
     averageCoverage: float = 0.91
     cacheHitRatio: float = 0.28
     evaluations: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Authentication & Conversation Models
+# ---------------------------------------------------------------------------
+
+class AuthRegisterRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+    confirm_password: Optional[str] = None
+
+
+class AuthLoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class UserSafe(BaseModel):
+    id: str
+    email: str
+    name: str
+    createdAt: Optional[str] = None
+
+
+class AuthResponse(BaseModel):
+    ok: bool = True
+    token: str
+    user: UserSafe
+
+
+class ConversationCreateRequest(BaseModel):
+    id: Optional[str] = None
+    title: Optional[str] = None
+    mode: Optional[str] = "deep_research"
+
+
+class MessageSaveRequest(BaseModel):
+    id: Optional[str] = None
+    role: str
+    content: str
+    metadata: Optional[Dict[str, Any]] = None
