@@ -17,7 +17,15 @@ __pycache__/
 venv/
 
 # Runtime data and uploads
-data/
+data/cogniflow.db
+data/uploads/
+data/extracted/
+data/cache/
+data/neural_embeddings_cache.json
+data/*.db-shm
+data/*.db-wal
+data/retrieval_benchmark_cache.json
+data/storage/
 /db/
 *.sqlite
 *.sqlite3
@@ -38,4 +46,3 @@ pnpm-debug.log*
 # Local reports / scratch
 reports/
 scratch/
-test-data/
