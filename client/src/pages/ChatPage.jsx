@@ -98,12 +98,10 @@ export function ChatPage() {
     fetchUserConversations,
   } = useChatStore();
 
-  const { setPdfSource } = useUIStore();
+  const { setPdfSource, traceOpen, setTraceOpen } = useUIStore();
   const { user, userId, accessKey, isAuthenticated } = useAuthStore();
   const { data: documents } = useDocumentsQuery();
   const uploadMutation = useUploadDocumentMutation();
-
-  const [traceOpen, setTraceOpen] = useState(true);
   const [autoFollow, setAutoFollow] = useState(true);
   const autoFollowRef = useRef(true);
   const [liveElapsedMs, setLiveElapsedMs] = useState(0);
@@ -670,22 +668,27 @@ export function ChatPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            {messages.length > 0 && (
+            {!traceOpen && (
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setTraceOpen(!traceOpen)}
-                className="h-6 px-2 text-[10px] font-mono text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--panel-inner)] border border-transparent hover:border-[var(--panel-border)] rounded-[2px]"
-                title="Toggle Agent Trace Panel"
-                aria-label="Toggle Agent Trace"
+                onClick={() => setTraceOpen(true)}
+                className="h-6 px-2 text-[10px] font-mono text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--panel-inner)] border border-[var(--panel-border)] rounded-[2px]"
+                title="Open Agent Trace"
+                aria-label="Open Agent Trace"
               >
-                <Workflow className="h-3 w-3 mr-1 text-[#f97316]" />
-                <span className="hidden sm:inline">Agent Trace</span>
-                {traceOpen ? (
-                  <PanelRightClose className="h-3 w-3 ml-1" />
-                ) : (
-                  <PanelRightOpen className="h-3 w-3 ml-1" />
-                )}
+                <Workflow className={`h-3 w-3 mr-1 text-[#f97316] ${loading ? "animate-pulse" : ""}`} />
+                <span>Agent Trace</span>
+                {loading ? (
+                  <span className="ml-1 text-[9px] text-[#f97316] font-bold animate-pulse">
+                    {(liveElapsedMs / 1000).toFixed(1)}s
+                  </span>
+                ) : latestSteps.length > 0 ? (
+                  <span className="ml-1 text-[9px] text-[var(--text-muted)]">
+                    ({latestSteps.length})
+                  </span>
+                ) : null}
+                <PanelRightOpen className="h-3 w-3 ml-1 text-[var(--text-muted)]" />
               </Button>
             )}
           </div>
