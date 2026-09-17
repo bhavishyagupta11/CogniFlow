@@ -64,6 +64,8 @@ class GuestSessionService:
         with self._lock:
             session = self._sessions.get(session_id)
             if session:
+                if session.migrated:
+                    return None
                 session.touch()
             return session
 
@@ -234,11 +236,17 @@ class GuestSessionService:
             session.chunks = [c for c in session.chunks if (c.get("documentId") or c.get("document_id")) != doc_id]
             return True
 
-    def mark_migrated(self, session_id: str) -> None:
+    def find_document_any_session(self, doc_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Looks up a document across all active guest sessions.
+        Returns the doc dict if found, or None.
+        Used for access control to distinguish 403 (unauthorized cross-guest access) from 404.
+        """
         with self._lock:
-            session = self.get_session(session_id)
-            if session:
-                session.migrated = True
+            for s in self._sessions.values():
+                if not s.migrated and doc_id in s.documents:
+                    return s.documents[doc_id]
+            return None
 
     def cleanup_expired_sessions(self, max_age_seconds: int = 7200) -> int:
         now = time.time()

@@ -5,9 +5,7 @@ Handles listing, file ingestion (PyMuPDF), document deletion, and PDF serving.
 
 from typing import List, Optional, Union
 from pathlib import Path
-from typing import List, Optional, Union
-from pathlib import Path
-from fastapi import APIRouter, Header, HTTPException, UploadFile, File, Form, Response
+from fastapi import APIRouter, Header, HTTPException, UploadFile, File, Form, Response, Request, Query
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from backend.config import UPLOADS_DIR
@@ -253,18 +251,151 @@ async def remove_document(
     return {"ok": True, "id": doc_id, "message": "Document deleted successfully"}
 
 
+def create_byte_range_response(
+    content_bytes: bytes,
+    media_type: str,
+    safe_filename: str,
+    range_header: Optional[str] = None,
+    session_id: Optional[str] = None
+) -> Response:
+    """
+    Constructs an RFC 7233 compliant byte response supporting:
+    - Normal 200 OK with full content and Content-Length
+    - Range requests (bytes=start-end) returning 206 Partial Content and Content-Range
+    - Safe handling of out-of-bounds ranges returning 416 Range Not Satisfiable
+    """
+    total_len = len(content_bytes)
+    common_headers = {
+        "Content-Disposition": f'inline; filename="{safe_filename}"',
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "private, no-transform, max-age=300",
+    }
+    if session_id:
+        common_headers["X-Session-ID"] = session_id
+
+    if not range_header or not range_header.startswith("bytes="):
+        # Full content response
+        resp_headers = dict(common_headers)
+        resp_headers["Content-Length"] = str(total_len)
+        return Response(
+            content=content_bytes,
+            status_code=200,
+            media_type=media_type,
+            headers=resp_headers
+        )
+
+    # Parse Range: bytes=start-end
+    range_spec = range_header.strip()[6:].strip()
+    if "," in range_spec:
+        range_spec = range_spec.split(",")[0].strip()
+
+    parts = range_spec.split("-", 1)
+    start_str, end_str = parts[0].strip(), parts[1].strip()
+
+    try:
+        if start_str and end_str:
+            start = int(start_str)
+            end = int(end_str)
+        elif start_str and not end_str:
+            start = int(start_str)
+            end = total_len - 1
+        elif not start_str and end_str:
+            suffix_len = int(end_str)
+            start = max(0, total_len - suffix_len)
+            end = total_len - 1
+        else:
+            raise ValueError("Invalid range specification")
+    except ValueError:
+        return Response(
+            status_code=416,
+            headers={"Content-Range": f"bytes */{total_len}"}
+        )
+
+    if start < 0 or start >= total_len or end < start:
+        return Response(
+            status_code=416,
+            headers={"Content-Range": f"bytes */{total_len}"}
+        )
+
+    end = min(end, total_len - 1)
+    chunk_len = end - start + 1
+    slice_data = content_bytes[start : end + 1]
+
+    resp_headers = dict(common_headers)
+    resp_headers["Content-Range"] = f"bytes {start}-{end}/{total_len}"
+    resp_headers["Content-Length"] = str(chunk_len)
+
+    return Response(
+        content=slice_data,
+        status_code=206,
+        media_type=media_type,
+        headers=resp_headers
+    )
+
+
 @router.get("/api/documents/{doc_id}/pdf")
 @router.get("/api/documents/{doc_id}/raw")
 async def view_document_pdf(
     doc_id: str,
+    request: Request,
     authorization: Optional[str] = Header(None),
-    x_user_id: Optional[str] = Header(None)
+    x_user_id: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
+    token: Optional[str] = Query(None),
+    session_id: Optional[str] = Query(None)
 ):
     from backend.services.db_service import db_service
     from backend.services.storage_service import storage_service, R2StorageService
+    from backend.services.guest_session_service import guest_session_service
 
-    # 1. Authorization check first (Phase 6)
-    identity = await resolve_caller_identity(authorization=authorization, x_user_id=x_user_id)
+    effective_auth = authorization or (f"Bearer {token.strip()}" if token and token.strip() else None)
+    effective_session = x_session_id or (session_id.strip() if session_id and session_id.strip() else None)
+    range_header = request.headers.get("Range")
+
+    # 1. Authoritatively resolve caller identity
+    identity = await resolve_caller_identity(
+        authorization=effective_auth,
+        x_user_id=x_user_id,
+        x_session_id=effective_session,
+        request=request
+    )
+
+    # 2. Check guest in-memory documents first (temporary guest session state)
+    guest_doc = guest_session_service.get_document(identity.user_id, doc_id)
+    if guest_doc:
+        target_owner = guest_doc.get("ownerId") or guest_doc.get("owner_id")
+        if target_owner != identity.user_id:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Forbidden: Caller '{identity.user_id}' is not authorized to access document '{doc_id}'"
+            )
+        raw_bytes = guest_doc.get("raw_bytes")
+        if not raw_bytes:
+            raise HTTPException(status_code=404, detail="Binary document object not found in guest session")
+
+        safe_filename = guest_doc.get("originalFilename") or guest_doc.get("original_filename") or f"{doc_id}.pdf"
+        media_type = guest_doc.get("mimeType") or guest_doc.get("mime_type") or "application/pdf"
+        if not media_type or media_type == "application/octet-stream":
+            media_type = "application/pdf" if safe_filename.endswith(".pdf") else "text/plain"
+
+        # Return actual PDF bytes directly with Range support (never written to R2)
+        return create_byte_range_response(
+            content_bytes=raw_bytes,
+            media_type=media_type,
+            safe_filename=safe_filename,
+            range_header=range_header,
+            session_id=identity.session_id
+        )
+
+    # If not found in caller's session, check if it belongs to ANY other active guest session
+    other_guest_doc = guest_session_service.find_document_any_session(doc_id)
+    if other_guest_doc:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Forbidden: Caller '{identity.user_id}' is not authorized to access document '{doc_id}'"
+        )
+
+    # 3. Check persistent database and manifest for authenticated/durable documents
     target = db_service.get_document(doc_id)
     if not target:
         manifest = get_manifest()
@@ -275,7 +406,7 @@ async def view_document_pdf(
     target_owner = target.get("ownerId") or target.get("owner_id")
     target_workspace = target.get("workspace") or target.get("workspace_id") or target.get("workspaceId")
 
-    # Authorization policy
+    # Authorization policy for persistent documents
     if identity.is_admin or identity.user_id == "system":
         allowed = True
     elif target_owner in ["public", "system_public"]:
@@ -283,7 +414,7 @@ async def view_document_pdf(
     elif identity.is_authenticated:
         allowed = (target_owner == identity.user_id)
     else:
-        # Guest workspace
+        # Unauthenticated / guest workspace callers are strictly forbidden from accessing another user's documents
         allowed = (target_owner in ["dev-user", "guest", "user_default"] or target_workspace in ["guest", "dev"])
 
     if not allowed:
@@ -300,7 +431,7 @@ async def view_document_pdf(
     r2_upload_key = target.get("r2_upload_key") or f"uploads/{doc_id}/original"
     filename = target.get("filename") or f"{doc_id}.pdf"
 
-    # 2. Cloudflare R2 short-lived signed URL
+    # 4. Cloudflare R2 short-lived signed URL for authenticated persistent storage
     if isinstance(storage_service, R2StorageService):
         try:
             presigned_url = storage_service.generate_presigned_url(r2_upload_key, expires_in_seconds=300)
@@ -308,35 +439,31 @@ async def view_document_pdf(
         except Exception as e:
             pass
 
-    # 3. Object storage stream
+    # 5. Object storage stream
     try:
         if storage_service.exists(r2_upload_key):
             content = storage_service.get_object(r2_upload_key)
-            return Response(
-                content=content,
+            return create_byte_range_response(
+                content_bytes=content,
                 media_type=media_type,
-                headers={
-                    "Content-Disposition": f'inline; filename="{safe_filename}"',
-                    "Accept-Ranges": "bytes",
-                    "Cache-Control": "private, max-age=300"
-                }
+                safe_filename=safe_filename,
+                range_header=range_header,
+                session_id=identity.session_id
             )
     except Exception:
         pass
 
-    # 4. Local filesystem fallback
+    # 6. Local filesystem fallback
     safe_disk_name = Path(filename).name
     pdf_path = (UPLOADS_DIR / safe_disk_name).resolve()
     if pdf_path.is_relative_to(UPLOADS_DIR.resolve()) and pdf_path.exists():
-        return FileResponse(
-            path=str(pdf_path),
+        content = pdf_path.read_bytes()
+        return create_byte_range_response(
+            content_bytes=content,
             media_type=media_type,
-            filename=safe_filename,
-            headers={
-                "Content-Disposition": f'inline; filename="{safe_filename}"',
-                "Accept-Ranges": "bytes",
-                "Cache-Control": "private, max-age=300"
-            }
+            safe_filename=safe_filename,
+            range_header=range_header,
+            session_id=identity.session_id
         )
 
     raise HTTPException(status_code=404, detail="Binary document object not found in storage")

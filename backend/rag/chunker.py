@@ -8,7 +8,7 @@ Implements deterministic, structure-aware semantic chunking:
   section, subsection, page_start, page_end, source_location, and text.
 """
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import re
 from pathlib import Path
 
@@ -28,26 +28,26 @@ class PDFIncorrectPasswordError(Exception):
     pass
 
 
-def extract_text_from_pdf(
+def extract_text_from_pdf_with_unlocked_bytes(
     pdf_source: str | Path | bytes,
     password: Optional[str] = None
-) -> List[Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], bytes]:
     """
     Extracts text page-by-page from a PDF file (path or in-memory bytes) using PyMuPDF.
     Detects encrypted PDFs and authenticates with password if provided.
+    If the PDF was password-protected, converts it in-memory to clean unlocked PDF bytes.
     Normalizes whitespace and reconnects split list items.
-    Returns a list of dicts: [{"pageNumber": 1, "text": "..."}]
+    Returns:
+        (pages_list, unlocked_pdf_bytes)
     """
     if fitz is None:
         raise RuntimeError("PyMuPDF (fitz) is not installed.")
 
-    pages = []
-    if isinstance(pdf_source, bytes):
-        doc = fitz.open(stream=pdf_source, filetype="pdf")
-    else:
-        doc = fitz.open(str(pdf_source))
+    raw_input_bytes = pdf_source if isinstance(pdf_source, bytes) else Path(pdf_source).read_bytes()
+    doc = fitz.open(stream=raw_input_bytes, filetype="pdf")
 
     try:
+        was_encrypted = False
         # Detect password protection
         if doc.needs_pass:
             if not password:
@@ -57,7 +57,9 @@ def extract_text_from_pdf(
             auth_res = doc.authenticate(password)
             if auth_res == 0:
                 raise PDFIncorrectPasswordError("Incorrect PDF password. Please try again.")
+            was_encrypted = True
 
+        pages = []
         for i, page in enumerate(doc):
             text = page.get_text("text") or ""
             # Reconnect numbered lists like "1. \nTitle" -> "1. Title"
@@ -71,8 +73,28 @@ def extract_text_from_pdf(
                     "pageNumber": i + 1,
                     "text": cleaned
                 })
+
+        if was_encrypted:
+            # Produce clean unlocked PDF bytes without encryption
+            unlocked_bytes = doc.tobytes()
+        else:
+            unlocked_bytes = raw_input_bytes
+
+        return pages, unlocked_bytes
     finally:
         doc.close()
+
+
+def extract_text_from_pdf(
+    pdf_source: str | Path | bytes,
+    password: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Extracts text page-by-page from a PDF file (path or in-memory bytes) using PyMuPDF.
+    Backwards-compatible wrapper around extract_text_from_pdf_with_unlocked_bytes.
+    Returns a list of dicts: [{"pageNumber": 1, "text": "..."}]
+    """
+    pages, _ = extract_text_from_pdf_with_unlocked_bytes(pdf_source, password=password)
     return pages
 
 

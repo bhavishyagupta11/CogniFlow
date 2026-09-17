@@ -16,6 +16,7 @@ from typing import List, Dict, Any, Optional, Tuple, Callable
 from backend.config import MANIFEST_PATH, UPLOADS_DIR, EXTRACTED_DIR
 from backend.rag.chunker import (
     extract_text_from_pdf,
+    extract_text_from_pdf_with_unlocked_bytes,
     chunk_text,
     semantic_chunk_document,
     PDFPasswordRequiredError,
@@ -200,9 +201,10 @@ async def ingest_file(
 
     # 4. Extract text & validate password BEFORE saving any files or DB records
     pages: List[Dict[str, Any]] = []
+    unlocked_bytes = file_bytes
     if ext == ".pdf":
         try:
-            pages = extract_text_from_pdf(file_bytes, password=password)
+            pages, unlocked_bytes = extract_text_from_pdf_with_unlocked_bytes(file_bytes, password=password)
         except PDFPasswordRequiredError as e:
             return {
                 "ok": False,
@@ -341,12 +343,12 @@ async def ingest_file(
         # Durable persistence for authenticated users
         from backend.services.storage_service import storage_service
         try:
-            storage_service.put_object(r2_upload_key, file_bytes, content_type=mime_type or ("application/pdf" if ext == ".pdf" else "text/plain"))
+            storage_service.put_object(r2_upload_key, unlocked_bytes, content_type=mime_type or ("application/pdf" if ext == ".pdf" else "text/plain"))
         except Exception as e:
             logger.warning(f"[DocumentService] Storage service write warning: {e}")
 
         try:
-            stored_path.write_bytes(file_bytes)
+            stored_path.write_bytes(unlocked_bytes)
         except Exception as e:
             pass
 
@@ -381,7 +383,7 @@ async def ingest_file(
             doc_dict=new_entry,
             pages=pages,
             chunks=semantic_chunks,
-            raw_bytes=file_bytes
+            raw_bytes=unlocked_bytes
         )
 
     # 8. Update in-memory vector store immediately

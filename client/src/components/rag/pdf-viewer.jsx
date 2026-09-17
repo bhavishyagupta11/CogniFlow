@@ -5,12 +5,14 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { Loader2, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useAuthStore } from "@/store/use-auth-store";
 
 if (typeof window !== "undefined") {
   pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 }
 
 export function PdfViewer({ documentId, initialPage = 1 }) {
+  const { token, sessionId } = useAuthStore();
   const [numPages, setNumPages] = useState();
   const [pageNumber, setPageNumber] = useState(initialPage);
   const [loadError, setLoadError] = useState(null);
@@ -20,6 +22,26 @@ export function PdfViewer({ documentId, initialPage = 1 }) {
   const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 });
 
   const viewportRef = useRef(null);
+
+  const fileSource = React.useMemo(() => {
+    if (!documentId) return null;
+    const params = new URLSearchParams();
+    if (token) {
+      params.set("token", token);
+    } else if (sessionId) {
+      params.set("session_id", sessionId);
+    }
+    const queryString = params.toString();
+    const url = `/api/documents/${documentId}/raw${queryString ? `?${queryString}` : ""}`;
+
+    return {
+      url,
+      httpHeaders: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(sessionId ? { "x-session-id": sessionId } : {}),
+      },
+    };
+  }, [documentId, token, sessionId]);
 
   // Responsive container observer
   useEffect(() => {
@@ -240,7 +262,7 @@ export function PdfViewer({ documentId, initialPage = 1 }) {
               }}
             >
               <Document
-                file={`/api/documents/${documentId}/raw`}
+                file={fileSource}
                 onLoadSuccess={onDocumentLoadSuccess}
                 onLoadError={onDocumentLoadError}
                 loading={
