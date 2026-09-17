@@ -14,7 +14,13 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, Callable
 
 from backend.config import MANIFEST_PATH, UPLOADS_DIR, EXTRACTED_DIR
-from backend.rag.chunker import extract_text_from_pdf, chunk_text, semantic_chunk_document
+from backend.rag.chunker import (
+    extract_text_from_pdf,
+    chunk_text,
+    semantic_chunk_document,
+    PDFPasswordRequiredError,
+    PDFIncorrectPasswordError
+)
 from backend.rag.vector_store import vector_store
 
 logger = logging.getLogger("cogniflow.document_service")
@@ -102,17 +108,19 @@ async def ingest_file(
     file_bytes: bytes,
     filename: str,
     mime_type: str,
-    owner_id: str = "dev-user"
+    owner_id: str = "dev-user",
+    is_authenticated: bool = True,
+    password: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Ingests a single file:
     1. Validates size, extension, and filename traversal
     2. Computes SHA-256 and checks for duplicate
-    3. Saves raw file to data/uploads/{id}.ext safely
-    4. Extracts text (via PyMuPDF for PDFs, UTF-8 for TXT/MD)
-    5. Validates non-empty text extraction; detects scanned/image-only low-text PDFs
-    6. Writes extracted pages to data/extracted/{id}.json
-    7. Updates manifest.json atomically and syncs active VectorStore
+    3. Extracts text and authenticates encrypted PDFs before writing any files
+    4. Validates non-empty text extraction; detects scanned/image-only low-text PDFs
+    5. If authenticated, saves raw file to uploads/ and R2, writes DB records, and updates manifest
+    6. If guest, stores temporary state in GuestSessionService (in-memory only, no DB/R2 writes)
+    7. Updates active in-memory VectorStore with owner isolation
     8. Performs synchronous retrieval smoke test before returning indexed=True
     """
     start_time = time.time()
@@ -160,18 +168,23 @@ async def ingest_file(
     # 3. Compute SHA-256 and check for duplicate
     file_hash = compute_sha256(file_bytes)
     existing = None
-    try:
-        from backend.services.db_service import db_service
-        existing = db_service.get_document_by_hash(file_hash, owner_id)
-    except Exception:
-        existing = None
+    if is_authenticated:
+        try:
+            from backend.services.db_service import db_service
+            existing = db_service.get_document_by_hash(file_hash, owner_id)
+        except Exception:
+            existing = None
 
-    if not existing:
-        manifest = get_manifest()
-        existing = next(
-            (m for m in manifest if m.get("hash") == file_hash and (m.get("ownerId") == owner_id or m.get("owner_id") == owner_id)),
-            None
-        )
+        if not existing:
+            manifest = get_manifest()
+            existing = next(
+                (m for m in manifest if m.get("hash") == file_hash and (m.get("ownerId") == owner_id or m.get("owner_id") == owner_id)),
+                None
+            )
+    else:
+        from backend.services.guest_session_service import guest_session_service
+        session_docs = guest_session_service.get_documents(owner_id)
+        existing = next((d for d in session_docs if d.get("hash") == file_hash), None)
 
     if existing:
         return {
@@ -185,42 +198,31 @@ async def ingest_file(
             }
         }
 
-    # 4. Save raw file to uploads directory & storage service (R2 / Local abstraction)
-    doc_id = str(uuid.uuid4())
-    stored_filename = f"{doc_id}{ext}"
-    stored_path = UPLOADS_DIR / stored_filename
-    r2_upload_key = f"uploads/{doc_id}/original"
-    r2_extracted_key = f"extracted/{doc_id}/pages.json"
-
-    from backend.services.storage_service import storage_service
-    try:
-        storage_service.put_object(r2_upload_key, file_bytes, content_type=mime_type or ("application/pdf" if ext == ".pdf" else "text/plain"))
-    except Exception as e:
-        logger.warning(f"[DocumentService] Storage service write warning: {e}")
-
-    try:
-        stored_path.write_bytes(file_bytes)
-    except Exception as e:
-        if not storage_service.exists(r2_upload_key):
-            return {
-                "ok": False,
-                "status": 500,
-                "error": {
-                    "code": "STORAGE_ERROR",
-                    "message": f"Failed to write file to disk: {e}"
-                }
-            }
-
-    # 5. Extract text
+    # 4. Extract text & validate password BEFORE saving any files or DB records
     pages: List[Dict[str, Any]] = []
     if ext == ".pdf":
         try:
-            pages = extract_text_from_pdf(file_bytes)
+            pages = extract_text_from_pdf(file_bytes, password=password)
+        except PDFPasswordRequiredError as e:
+            return {
+                "ok": False,
+                "status": 401,
+                "error": {
+                    "code": "PASSWORD_REQUIRED",
+                    "message": str(e)
+                }
+            }
+        except PDFIncorrectPasswordError as e:
+            return {
+                "ok": False,
+                "status": 401,
+                "error": {
+                    "code": "INCORRECT_PASSWORD",
+                    "message": str(e)
+                }
+            }
         except Exception as e:
             print(f"[DocumentService] Error extracting PDF {safe_filename}: {e}")
-            if stored_path.exists():
-                stored_path.unlink(missing_ok=True)
-            storage_service.delete_object(r2_upload_key)
             return {
                 "ok": False,
                 "status": 422,
@@ -236,9 +238,6 @@ async def ingest_file(
             pages = [{"pageNumber": 1, "text": text}]
         except Exception as e:
             print(f"[DocumentService] Error decoding text {safe_filename}: {e}")
-            if stored_path.exists():
-                stored_path.unlink(missing_ok=True)
-            storage_service.delete_object(r2_upload_key)
             return {
                 "ok": False,
                 "status": 422,
@@ -248,12 +247,9 @@ async def ingest_file(
                 }
             }
 
-    # 6. Validate usable text extracted - detect image-only/scanned PDF (low-text condition)
+    # 5. Validate usable text extracted - detect image-only/scanned PDF (low-text condition)
     total_text_len = sum(len(p.get("text", "").strip()) for p in pages)
     if ext == ".pdf" and (total_text_len < 10 or len(pages) == 0):
-        if stored_path.exists():
-            stored_path.unlink(missing_ok=True)
-        storage_service.delete_object(r2_upload_key)
         return {
             "ok": False,
             "status": 422,
@@ -264,9 +260,6 @@ async def ingest_file(
         }
 
     if total_text_len == 0 or len(pages) == 0:
-        if stored_path.exists():
-            stored_path.unlink(missing_ok=True)
-        storage_service.delete_object(r2_upload_key)
         return {
             "ok": False,
             "status": 422,
@@ -276,15 +269,18 @@ async def ingest_file(
             }
         }
 
-    # 7. Semantic chunking with complete provenance
+    # 6. Semantic chunking with complete provenance
+    doc_id = str(uuid.uuid4())
+    stored_filename = f"{doc_id}{ext}"
+    stored_path = UPLOADS_DIR / stored_filename
+    r2_upload_key = f"uploads/{doc_id}/original"
+    r2_extracted_key = f"extracted/{doc_id}/pages.json"
+
     semantic_chunks = semantic_chunk_document(pages, doc_id, safe_filename)
     total_chunks = len(semantic_chunks)
     chunk_ids = [c["chunk_id"] for c in semantic_chunks]
 
     if total_chunks == 0:
-        if stored_path.exists():
-            stored_path.unlink(missing_ok=True)
-        storage_service.delete_object(r2_upload_key)
         return {
             "ok": False,
             "status": 422,
@@ -294,20 +290,7 @@ async def ingest_file(
             }
         }
 
-    # 8. Save extracted representation to storage service and local disk
-    extracted_json_bytes = json.dumps(pages, indent=2).encode("utf-8")
-    try:
-        storage_service.put_object(r2_extracted_key, extracted_json_bytes, content_type="application/json")
-    except Exception as e:
-        logger.warning(f"[DocumentService] Warning: Failed to store extracted json to storage: {e}")
-
-    extracted_path = EXTRACTED_DIR / f"{doc_id}.json"
-    try:
-        extracted_path.write_text(json.dumps(pages, indent=2), encoding="utf-8")
-    except Exception as e:
-        print(f"[DocumentService] Warning: Failed to write extracted json {extracted_path}: {e}")
-
-    # 9. Persist document and chunks to Database (source of truth) and manifest
+    # 7. Persist representation
     now_iso = datetime.now(timezone.utc).isoformat()
     new_entry = {
         "schemaVersion": 2,
@@ -349,24 +332,59 @@ async def ingest_file(
         "index_insertion_status": "indexed",
         "indexVersion": vector_store.index_version + 1,
         "index_version": vector_store.index_version + 1,
-        "r2_upload_key": r2_upload_key,
-        "r2_extracted_key": r2_extracted_key,
+        "r2_upload_key": r2_upload_key if is_authenticated else None,
+        "r2_extracted_key": r2_extracted_key if is_authenticated else None,
         "lifecycle_state": "ACTIVE"
     }
 
-    try:
-        from backend.services.db_service import db_service
-        db_service.create_document(new_entry)
-        db_service.save_chunks(doc_id, semantic_chunks)
-    except Exception as e:
-        logger.warning(f"[DocumentService] DB document persistence warning: {e}")
+    if is_authenticated:
+        # Durable persistence for authenticated users
+        from backend.services.storage_service import storage_service
+        try:
+            storage_service.put_object(r2_upload_key, file_bytes, content_type=mime_type or ("application/pdf" if ext == ".pdf" else "text/plain"))
+        except Exception as e:
+            logger.warning(f"[DocumentService] Storage service write warning: {e}")
 
-    manifest = get_manifest()
-    manifest = [m for m in manifest if m.get("id") != doc_id]
-    manifest.append(new_entry)
-    save_manifest(manifest)
+        try:
+            stored_path.write_bytes(file_bytes)
+        except Exception as e:
+            pass
 
-    # 10. Update in-memory vector store immediately
+        extracted_json_bytes = json.dumps(pages, indent=2).encode("utf-8")
+        try:
+            storage_service.put_object(r2_extracted_key, extracted_json_bytes, content_type="application/json")
+        except Exception as e:
+            pass
+
+        extracted_path = EXTRACTED_DIR / f"{doc_id}.json"
+        try:
+            extracted_path.write_text(json.dumps(pages, indent=2), encoding="utf-8")
+        except Exception as e:
+            pass
+
+        try:
+            from backend.services.db_service import db_service
+            db_service.create_document(new_entry)
+            db_service.save_chunks(doc_id, semantic_chunks)
+        except Exception as e:
+            logger.warning(f"[DocumentService] DB document persistence warning: {e}")
+
+        manifest = get_manifest()
+        manifest = [m for m in manifest if m.get("id") != doc_id]
+        manifest.append(new_entry)
+        save_manifest(manifest)
+    else:
+        # Temporary in-memory persistence for guests
+        from backend.services.guest_session_service import guest_session_service
+        guest_session_service.add_document(
+            session_id=owner_id,
+            doc_dict=new_entry,
+            pages=pages,
+            chunks=semantic_chunks,
+            raw_bytes=file_bytes
+        )
+
+    # 8. Update in-memory vector store immediately
     vector_store.add_document(doc_id, safe_filename, pages, owner_id)
     index_after = len(vector_store.chunks)
 
@@ -463,6 +481,14 @@ def delete_document(
         - Unauthenticated caller CANNOT delete registered user documents, public documents, or unowned documents.
         - Returns DeleteResult(False, "GUEST_UNAUTHORIZED") or DeleteResult(False, "CANNOT_DELETE_PUBLIC_DOC").
     """
+    # Check GuestSessionService first if caller is unauthenticated
+    if not is_authenticated:
+        from backend.services.guest_session_service import guest_session_service
+        if guest_session_service.get_document(caller_id, doc_id):
+            guest_session_service.delete_document(caller_id, doc_id)
+            vector_store.remove_document(doc_id)
+            return DeleteResult(True, "DELETED")
+
     manifest = get_manifest()
     target = next((m for m in manifest if m.get("id") == doc_id or m.get("document_id") == doc_id), None)
     if not target:

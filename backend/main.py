@@ -3,7 +3,7 @@ CogniFlow Python FastAPI Backend Application
 High-Performance, Sub-3s RAG Engine matching the exact React Frontend contracts.
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
@@ -33,8 +33,17 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Disposition"]
+    expose_headers=["Content-Disposition", "X-Session-ID"]
 )
+
+
+@app.middleware("http")
+async def guest_session_header_middleware(request: Request, call_next):
+    response = await call_next(request)
+    session_id = getattr(request.state, "session_id", None)
+    if session_id and "X-Session-ID" not in response.headers:
+        response.headers["X-Session-ID"] = session_id
+    return response
 
 # Mount Routers
 app.include_router(health_router)

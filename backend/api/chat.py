@@ -25,19 +25,30 @@ async def stream_with_persistence(
     user_id: str,
     conv_id: Optional[str],
     question: str,
-    mode: str
+    mode: str,
+    is_authenticated: bool = False
 ) -> AsyncGenerator[str, None]:
     """
     Wraps the pipeline generator to persist user and assistant messages
-    into the database after streaming finishes, without slowing down SSE delivery.
+    into Supabase (if authenticated) or GuestSessionService (if guest)
+    after streaming finishes, without slowing down SSE delivery.
     """
     is_persisted = False
-    if conv_id and user_id and user_id != "dev-user":
+    if conv_id and user_id:
         try:
-            conv = get_conversation(conv_id, user_id)
-            if not conv:
-                create_conversation(user_id=user_id, title=question[:45].strip(), mode=mode, conv_id=conv_id)
-            save_message(conv_id=conv_id, user_id=user_id, role="user", content=question)
+            if is_authenticated:
+                conv = get_conversation(conv_id, user_id)
+                if not conv:
+                    create_conversation(user_id=user_id, title=question[:45].strip(), mode=mode, conv_id=conv_id)
+                save_message(conv_id=conv_id, user_id=user_id, role="user", content=question)
+            else:
+                from backend.services.guest_session_service import guest_session_service
+                guest_session_service.save_message(
+                    session_id=user_id,
+                    conv_id=conv_id,
+                    role="user",
+                    content=question
+                )
             is_persisted = True
         except Exception:
             pass
@@ -74,13 +85,23 @@ async def stream_with_persistence(
                     "totalDurationMs": pipeline_result.get("totalDurationMs", 0)
                 }
             if answer_text:
-                save_message(
-                    conv_id=conv_id,
-                    user_id=user_id,
-                    role="assistant",
-                    content=answer_text,
-                    metadata=metadata
-                )
+                if is_authenticated:
+                    save_message(
+                        conv_id=conv_id,
+                        user_id=user_id,
+                        role="assistant",
+                        content=answer_text,
+                        metadata=metadata
+                    )
+                else:
+                    from backend.services.guest_session_service import guest_session_service
+                    guest_session_service.save_message(
+                        session_id=user_id,
+                        conv_id=conv_id,
+                        role="assistant",
+                        content=answer_text,
+                        metadata=metadata
+                    )
         except Exception:
             pass
 
@@ -90,7 +111,8 @@ async def chat_endpoint(
     req: ChatQueryRequest,
     request: Request,
     authorization: Optional[str] = Header(None),
-    x_user_id: Optional[str] = Header(None)
+    x_user_id: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None)
 ):
     question = req.get_question()
     if not question:
@@ -98,9 +120,11 @@ async def chat_endpoint(
     if len(question) > 1500:
         raise HTTPException(status_code=400, detail="Question exceeds 1500 characters")
 
-    # Resolve authenticated user or fallback to header / dev-user
-    user_info = await get_optional_user(authorization=authorization, x_user_id=x_user_id)
-    user_id = user_info["id"] if user_info else (x_user_id or "dev-user")
+    # Resolve authenticated user or fallback to server-issued guest session
+    user_info = await get_optional_user(authorization=authorization, x_user_id=x_user_id, x_session_id=x_session_id)
+    user_id = user_info["id"]
+    is_authenticated = user_info.get("is_authenticated", False)
+    session_id = user_info.get("session_id")
 
     mode = req.mode or "deep_research"
     conv_id = req.get_conversation_id()
@@ -112,6 +136,8 @@ async def chat_endpoint(
         "X-Accel-Buffering": "no",
         "Content-Encoding": "none"
     }
+    if session_id:
+        headers["X-Session-ID"] = session_id
 
     pipeline_gen = run_rag_pipeline(
         question,
@@ -127,7 +153,8 @@ async def chat_endpoint(
         user_id=user_id,
         conv_id=conv_id,
         question=question,
-        mode=mode
+        mode=mode,
+        is_authenticated=is_authenticated
     )
 
     return StreamingResponse(

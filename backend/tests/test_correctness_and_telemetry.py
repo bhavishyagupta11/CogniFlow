@@ -237,16 +237,24 @@ async def test_backend_lifecycle_sse_event_stream():
 @pytest.fixture
 def ensure_lsa_64d():
     """Ensures index has >= 65 chunks so LSA 64-dimensional SVD projection is deterministic."""
-    added = False
-    if vector_store.total_docs < 65:
-        pages = [{"pageNumber": i, "text": f"Deterministic section {i} for LSA concept projection testing with unique vocabulary term_{i}."} for i in range(1, 70)]
-        vector_store.add_document("doc-test-lsa-telemetry", "Deterministic LSA Test Document", pages)
-        added = True
+    doc_id = "doc-test-lsa-telemetry"
+    pages = [
+        {
+            "pageNumber": i,
+            "text": (
+                f"# Section {i}: Binary Search and Algorithmic Analysis {i}\n\n"
+                f"Binary search time complexity operates in logarithmic O(log n) performance across partitioned datasets. "
+                f"This deterministic module evaluates search space boundaries, asymptotic growth rates, and structural convergence properties. "
+                f"Concept vocabulary vector terms include keyword_{i}, metric_{i}, distribution_{i}, and variance_{i}."
+            )
+        }
+        for i in range(1, 75)
+    ]
+    vector_store.add_document(doc_id, "Deterministic LSA Test Document", pages)
     try:
         yield
     finally:
-        if added:
-            vector_store.remove_document("doc-test-lsa-telemetry")
+        vector_store.remove_document(doc_id)
 
 
 def test_lsa_semantic_retrieval_and_labeling(ensure_lsa_64d):

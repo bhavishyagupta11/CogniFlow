@@ -10,7 +10,7 @@ from typing import Optional, Dict, Any
 
 import bcrypt
 import jwt
-from fastapi import Header, HTTPException, status
+from fastapi import Request, Header, HTTPException, status
 
 from backend.services.db_service import get_user_by_id
 
@@ -76,7 +76,7 @@ def decode_access_token(token: str) -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 def extract_token_from_header(authorization: Optional[str]) -> Optional[str]:
-    if not authorization:
+    if not authorization or not isinstance(authorization, str):
         return None
     parts = authorization.strip().split()
     if len(parts) == 2 and parts[0].lower() == "bearer":
@@ -118,6 +118,7 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[
 
 
 from dataclasses import dataclass
+import uuid
 
 @dataclass
 class CallerIdentity:
@@ -125,6 +126,7 @@ class CallerIdentity:
     is_authenticated: bool
     is_admin: bool
     role: str
+    session_id: Optional[str] = None
     email: Optional[str] = None
     name: Optional[str] = None
 
@@ -146,14 +148,21 @@ def is_admin_user(user: Dict[str, Any], payload: Optional[Dict[str, Any]] = None
 
 async def resolve_caller_identity(
     authorization: Optional[str] = Header(None),
-    x_user_id: Optional[str] = Header(None)
+    x_user_id: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
+    request: Optional[Request] = None
 ) -> CallerIdentity:
     """
     Authoritatively resolves the requesting caller's identity.
     Strictly verifies JWT tokens, prevents x-user-id header spoofing,
-    and isolates guest/dev workspaces from registered user accounts.
+    and isolates guest sessions from registered user accounts without a shared dev-user.
     """
     token = extract_token_from_header(authorization)
+    raw_session = x_session_id if isinstance(x_session_id, str) else None
+    clean_session = raw_session.strip() if raw_session else None
+
+    raw_user_id = x_user_id if isinstance(x_user_id, str) else None
+    clean_x = raw_user_id.strip() if raw_user_id else None
 
     # Path 1: Authenticated via JWT bearer token
     if token:
@@ -172,8 +181,7 @@ async def resolve_caller_identity(
             )
 
         # Anti-spoofing check: if x-user-id header is sent, it MUST match the token's authenticated sub
-        if x_user_id and x_user_id.strip():
-            clean_x = x_user_id.strip()
+        if clean_x:
             if clean_x != user["id"]:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -181,8 +189,12 @@ async def resolve_caller_identity(
                 )
 
         admin_flag = is_admin_user(user, payload)
+        if request and hasattr(request, "state") and clean_session:
+            request.state.session_id = clean_session
+
         return CallerIdentity(
             user_id=user["id"],
+            session_id=clean_session,
             is_authenticated=True,
             is_admin=admin_flag,
             role="admin" if admin_flag else "user",
@@ -190,66 +202,65 @@ async def resolve_caller_identity(
             name=user.get("name")
         )
 
-    # Path 2: Unauthenticated / Guest workspace
-    if x_user_id and x_user_id.strip():
-        clean_x = x_user_id.strip()
-        # Anti-spoofing: An unauthenticated caller CANNOT claim an authenticated user account
+    # Anti-spoofing checks for unauthenticated callers:
+    if clean_x:
         if clean_x.startswith("user_") or get_user_by_id(clean_x) is not None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Authentication required: Cannot claim registered user identity without a valid bearer token."
             )
-        # Anti-spoofing: An unauthenticated caller CANNOT claim admin or system privilege
         if clean_x in ["admin", "system", "root"]:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Authentication required: Cannot claim administrative identity without a valid bearer token."
             )
-        if clean_x in ["dev-user", "guest", "user_default"]:
-            return CallerIdentity(
-                user_id="dev-user",
-                is_authenticated=False,
-                is_admin=False,
-                role="guest",
-                email="guest@cogniflow.local",
-                name="Guest Workspace"
-            )
-        # Any other unauthenticated string defaults safely to guest workspace
-        return CallerIdentity(
-            user_id="dev-user",
-            is_authenticated=False,
-            is_admin=False,
-            role="guest",
-            email="guest@cogniflow.local",
-            name="Guest Workspace"
-        )
 
-    # Path 3: Default Guest / Dev Workspace
+    # Path 2: Unauthenticated / Guest session resolution
+    # Client cannot arbitrarily choose or impersonate a session ID.
+    # The server authoritatively validates candidate tokens against active sessions.
+    # If missing, invalid, or forged, a brand new server-issued session is created.
+    from backend.services.guest_session_service import guest_session_service
+    guest_session = guest_session_service.resolve_valid_session(clean_session)
+    effective_session_id = guest_session.session_id
+
+    if request and hasattr(request, "state"):
+        request.state.session_id = effective_session_id
+
     return CallerIdentity(
-        user_id="dev-user",
+        user_id=effective_session_id,
+        session_id=effective_session_id,
         is_authenticated=False,
         is_admin=False,
         role="guest",
-        email="guest@cogniflow.local",
+        email=f"{effective_session_id}@cogniflow.local",
         name="Guest Workspace"
     )
 
 
 async def get_optional_user(
     authorization: Optional[str] = Header(None),
-    x_user_id: Optional[str] = Header(None)
+    x_user_id: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
+    request: Optional[Request] = None
 ) -> Optional[Dict[str, Any]]:
     """
     Returns authenticated user if valid token present,
-    or falls back to safe identity resolving anti-spoofing constraints.
+    or falls back to isolated guest session identity resolving anti-spoofing constraints.
     """
-    identity = await resolve_caller_identity(authorization=authorization, x_user_id=x_user_id)
+    identity = await resolve_caller_identity(
+        authorization=authorization,
+        x_user_id=x_user_id,
+        x_session_id=x_session_id,
+        request=request
+    )
     return {
         "id": identity.user_id,
+        "session_id": identity.session_id,
         "email": identity.email or f"{identity.user_id}@cogniflow.local",
         "name": identity.name or identity.user_id,
         "is_authenticated": identity.is_authenticated,
         "is_admin": identity.is_admin,
         "role": identity.role
     }
+
 

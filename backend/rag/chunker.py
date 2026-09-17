@@ -18,9 +18,23 @@ except ImportError:
     fitz = None
 
 
-def extract_text_from_pdf(pdf_source: str | Path | bytes) -> List[Dict[str, Any]]:
+class PDFPasswordRequiredError(Exception):
+    """Raised when an encrypted PDF is uploaded without a password."""
+    pass
+
+
+class PDFIncorrectPasswordError(Exception):
+    """Raised when the provided password fails to decrypt the encrypted PDF."""
+    pass
+
+
+def extract_text_from_pdf(
+    pdf_source: str | Path | bytes,
+    password: Optional[str] = None
+) -> List[Dict[str, Any]]:
     """
     Extracts text page-by-page from a PDF file (path or in-memory bytes) using PyMuPDF.
+    Detects encrypted PDFs and authenticates with password if provided.
     Normalizes whitespace and reconnects split list items.
     Returns a list of dicts: [{"pageNumber": 1, "text": "..."}]
     """
@@ -32,20 +46,33 @@ def extract_text_from_pdf(pdf_source: str | Path | bytes) -> List[Dict[str, Any]
         doc = fitz.open(stream=pdf_source, filetype="pdf")
     else:
         doc = fitz.open(str(pdf_source))
-    for i, page in enumerate(doc):
-        text = page.get_text("text") or ""
-        # Reconnect numbered lists like "1. \nTitle" -> "1. Title"
-        text = re.sub(r"(\b\d{1,3}\.)\s*\n\s*", r"\1 ", text)
-        # Reconnect bullet lists like "• \nItem" -> "• Item"
-        text = re.sub(r"([•\-\*])\s*\n\s*", r"\1 ", text)
-        # Clean extra horizontal whitespace while preserving paragraph line breaks
-        cleaned = re.sub(r"[ \t]+", " ", text).strip()
-        if cleaned:
-            pages.append({
-                "pageNumber": i + 1,
-                "text": cleaned
-            })
-    doc.close()
+
+    try:
+        # Detect password protection
+        if doc.needs_pass:
+            if not password:
+                raise PDFPasswordRequiredError(
+                    "This PDF is password-protected. Please enter the password to unlock and process it."
+                )
+            auth_res = doc.authenticate(password)
+            if auth_res == 0:
+                raise PDFIncorrectPasswordError("Incorrect PDF password. Please try again.")
+
+        for i, page in enumerate(doc):
+            text = page.get_text("text") or ""
+            # Reconnect numbered lists like "1. \nTitle" -> "1. Title"
+            text = re.sub(r"(\b\d{1,3}\.)\s*\n\s*", r"\1 ", text)
+            # Reconnect bullet lists like "• \nItem" -> "• Item"
+            text = re.sub(r"([•\-\*])\s*\n\s*", r"\1 ", text)
+            # Clean extra horizontal whitespace while preserving paragraph line breaks
+            cleaned = re.sub(r"[ \t]+", " ", text).strip()
+            if cleaned:
+                pages.append({
+                    "pageNumber": i + 1,
+                    "text": cleaned
+                })
+    finally:
+        doc.close()
     return pages
 
 

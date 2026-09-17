@@ -71,6 +71,8 @@ def format_doc_dict(row: Dict[str, Any]) -> Dict[str, Any]:
     d["file_hash"] = d["hash"]
     d["filename"] = d.get("storage_filename") or d.get("filename") or f"{doc_id}.pdf"
     d["storage_filename"] = d["filename"]
+    d["r2_upload_key"] = d.get("r2_upload_key") or f"uploads/{doc_id}/original"
+    d["r2_extracted_key"] = d.get("r2_extracted_key") or f"extracted/{doc_id}/pages.json"
 
     # Parse chunkIds if present
     if "chunk_ids_json" in d and d["chunk_ids_json"]:
@@ -483,8 +485,8 @@ class SqliteDatabaseService(BaseDatabaseService):
                     formatted["processing_status"],
                     formatted["index_status"],
                     formatted.get("index_version", 1),
-                    formatted.get("r2_upload_key", f"uploads/{doc_id}/original"),
-                    formatted.get("r2_extracted_key", f"extracted/{doc_id}/pages.json"),
+                    formatted.get("r2_upload_key") or f"uploads/{doc_id}/original",
+                    formatted.get("r2_extracted_key") or f"extracted/{doc_id}/pages.json",
                     formatted.get("lifecycle_state", "ACTIVE"),
                     formatted.get("error_message"),
                     formatted.get("created_at", now),
@@ -967,8 +969,8 @@ class PostgresDatabaseService(BaseDatabaseService):
                         formatted["processing_status"],
                         formatted["index_status"],
                         formatted.get("index_version", 1),
-                        formatted.get("r2_upload_key", f"uploads/{doc_id}/original"),
-                        formatted.get("r2_extracted_key", f"extracted/{doc_id}/pages.json"),
+                        formatted.get("r2_upload_key") or f"uploads/{doc_id}/original",
+                        formatted.get("r2_extracted_key") or f"extracted/{doc_id}/pages.json",
                         formatted.get("lifecycle_state", "ACTIVE"),
                         formatted.get("error_message"),
                         formatted.get("created_at", now),

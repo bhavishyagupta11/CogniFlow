@@ -80,25 +80,7 @@ class VectorStore:
         all_chunks: List[Dict[str, Any]] = []
         seen_doc_ids = set()
 
-        # 1. Load built-in papers
-        for doc in KNOWLEDGE_BASE:
-            seen_doc_ids.add(doc["id"])
-            pages = [{"pageNumber": 1, "text": doc["content"]}]
-            sem_chunks = semantic_chunk_document(pages, doc["id"], doc["title"])
-            for c in sem_chunks:
-                c["authors"] = doc.get("authors", "Vaswani et al.")
-                c["year"] = doc.get("year", 2020)
-                c["source"] = doc.get("source", "Research Paper")
-                c["ownerId"] = "system_public"
-                c["owner_id"] = "system_public"
-                c["tenantId"] = "system_public"
-                c["tenant_id"] = "system_public"
-                c["filename"] = f"{doc['id']}.txt"
-                c["originalFilename"] = doc["title"]
-                c["original_filename"] = doc["title"]
-                all_chunks.append(c)
-
-        # 2. Load custom uploaded documents and chunks from PostgreSQL/Database (Authoritative Source of Truth)
+        # 1. Custom uploaded documents and chunks from PostgreSQL/Database (Authoritative Source of Truth)
         loaded_from_db = False
         try:
             from backend.services.db_service import db_service
@@ -421,17 +403,36 @@ class VectorStore:
                 pass
         self._rebuild()
 
+    def migrate_owner(self, old_owner_id: str, new_owner_id: str) -> int:
+        """Migrates chunk and in-memory document ownership from guest session to authenticated user."""
+        count = 0
+        with self._lock:
+            for c in self.chunks:
+                if c.get("owner_id") == old_owner_id or c.get("ownerId") == old_owner_id:
+                    c["owner_id"] = new_owner_id
+                    c["ownerId"] = new_owner_id
+                    c["tenant_id"] = new_owner_id
+                    c["tenantId"] = new_owner_id
+                    count += 1
+            for doc_id, d in self.in_memory_docs.items():
+                if d.get("owner_id") == old_owner_id or d.get("ownerId") == old_owner_id:
+                    d["owner_id"] = new_owner_id
+                    d["ownerId"] = new_owner_id
+                    d["tenant_id"] = new_owner_id
+                    d["tenantId"] = new_owner_id
+        return count
+
     def _filter_candidate_indices(
         self,
         owner_id: Optional[str] = None,
         document_id: Optional[str] = None,
         scope: Optional[str] = None
     ) -> List[int]:
-        """Returns list of chunk indices matching tenant, user, and document scope."""
+        """Returns list of chunk indices strictly matching tenant, user, and document scope."""
         active_owner = owner_id or "dev-user"
-        valid_owners = [active_owner, "system_public", "public"]
+        valid_owners = [active_owner]
         if active_owner in ["dev-user", "user_default"]:
-            valid_owners.extend(["dev-user", "user_default"])
+            valid_owners.extend(["dev-user", "user_default", "system_public", "public"])
 
         matched_indices = []
         for idx in range(self.total_docs):
@@ -444,12 +445,10 @@ class VectorStore:
             if scope in ["DOCUMENT", "RECENT_UPLOAD", "explicit_document", "recent_upload"]:
                 if not document_id or chunk_doc_id != document_id:
                     continue
-                if chunk.get("ownerId") == "system_public" and chunk_doc_id != document_id:
-                    continue
 
-            # Strict tenant / owner isolation
+            # Strict tenant / owner isolation: only chunks belonging to the requesting user/session
             owner = chunk.get("ownerId") or chunk.get("owner_id")
-            if owner and owner not in valid_owners:
+            if owner not in valid_owners:
                 continue
 
             matched_indices.append(idx)
