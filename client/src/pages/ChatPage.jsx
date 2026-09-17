@@ -640,7 +640,7 @@ export function ChatPage() {
   const latestTotalMs = latestAssistantMsg?.totalDurationMs ?? 0;
 
   return (
-    <div className="flex flex-1 min-h-0 w-full overflow-hidden relative">
+    <div className="flex flex-col lg:flex-row flex-1 min-h-0 min-w-0 w-full overflow-hidden relative">
       {/* Hidden File Input for Composer '+' Button */}
       <input
         ref={fileInputRef}
@@ -652,22 +652,22 @@ export function ChatPage() {
       />
 
       {/* Main Column */}
-      <main className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative">
+      <main className="flex-1 flex flex-col min-w-0 min-h-0 h-full overflow-hidden relative">
         {/* Workspace Toolbar (Trace Toggle & Mission Status) */}
-        <div className="h-9 border-b border-[var(--panel-border)] bg-[var(--panel-bg)]/80 backdrop-blur-xs px-4 flex items-center justify-between shrink-0 z-10">
-          <div className="flex items-center gap-2 text-[10px] font-mono text-[var(--text-muted)]">
-            <span className="text-[#f97316] font-bold uppercase">MODE:</span>
-            <span className="font-semibold text-[var(--text-secondary)] uppercase">
+        <div className="h-9 border-b border-[var(--panel-border)] bg-[var(--panel-bg)]/80 backdrop-blur-xs px-4 flex items-center justify-between shrink-0 z-10 min-w-0">
+          <div className="flex items-center gap-2 text-[10px] font-mono text-[var(--text-muted)] min-w-0 truncate">
+            <span className="text-[#f97316] font-bold uppercase shrink-0">MODE:</span>
+            <span className="font-semibold text-[var(--text-secondary)] uppercase truncate">
               {activeModeConfig.label}
             </span>
             {activeModeConfig.badge && (
-              <span className="text-[var(--text-muted)] font-mono text-[9px]">
+              <span className="text-[var(--text-muted)] font-mono text-[9px] hidden sm:inline truncate">
                 · {activeModeConfig.badge}
               </span>
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             {!traceOpen && (
               <Button
                 variant="ghost"
@@ -698,7 +698,7 @@ export function ChatPage() {
         <div
           ref={chatContainerRef}
           onScroll={handleScroll}
-          className="flex-1 min-h-0 overflow-y-auto px-4 py-6 relative"
+          className="flex-1 min-h-0 min-w-0 overflow-y-auto px-4 py-6 relative"
         >
           {/* Floating Jump to Latest Button (Specification Section 29) */}
           {!autoFollow && (
@@ -712,7 +712,7 @@ export function ChatPage() {
             </button>
           )}
 
-          <div className="mx-auto max-w-3xl space-y-6">
+          <div className="mx-auto max-w-3xl w-full min-w-0 space-y-6">
             {/* Landing State: Greeting Pill + 4 Starter Cards */}
             {messages.length === 0 ? (
               <div className="pt-10 sm:pt-16 pb-6 flex flex-col items-center space-y-8 select-none">
@@ -727,7 +727,7 @@ export function ChatPage() {
                 </div>
 
                 {/* 4 Starter CogniFlow Cards (2-column grid) */}
-                <div className="w-full max-w-2xl grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="w-full max-w-2xl grid grid-cols-1 sm:grid-cols-2 gap-3 min-w-0">
                   {/* Card 1: Fast Grounded Answering */}
                   <div
                     onClick={() => {
@@ -829,8 +829,8 @@ export function ChatPage() {
         </div>
 
         {/* Bottom Workspace Composer Area */}
-        <div className="border-t border-[var(--panel-border)] bg-[var(--panel-bg)]/90 backdrop-blur-xs px-4 py-3 shrink-0 select-none">
-          <div className="mx-auto max-w-3xl space-y-2">
+        <div className="border-t border-[var(--panel-border)] bg-[var(--panel-bg)]/90 backdrop-blur-xs px-4 py-3 shrink-0 select-none min-w-0">
+          <div className="mx-auto max-w-3xl w-full min-w-0 space-y-2">
             {/* Functional Mode Tabs (Specification Section 52) */}
             <div
               className="flex items-center gap-1.5 overflow-x-auto pb-1"
@@ -924,17 +924,17 @@ export function ChatPage() {
       {/* Collapsible Agent Trace Panel */}
       {traceOpen && (
         <aside
-          className="w-full sm:w-[380px] xl:w-[420px] shrink-0 flex flex-col bg-[var(--panel-bg)] border-l border-[var(--panel-border)] h-full overflow-hidden transition-all duration-200 z-10"
+          className="w-full lg:w-[320px] xl:w-[380px] 2xl:w-[420px] h-[260px] sm:h-[300px] lg:h-full max-h-[40vh] lg:max-h-none shrink-0 flex flex-col bg-[var(--panel-bg)] border-t lg:border-t-0 lg:border-l border-[var(--panel-border)] overflow-hidden transition-all duration-200 z-10 min-w-0"
           aria-label="Agent Trace Telemetry"
         >
-          <div className="border-b border-[var(--panel-border)] px-4 py-2.5 flex items-center justify-between bg-[var(--panel-inner)] shrink-0 gap-2 font-mono">
+          <div className="border-b border-[var(--panel-border)] px-4 py-2.5 flex items-center justify-between bg-[var(--panel-inner)] shrink-0 gap-2 font-mono min-w-0">
             <div className="flex items-center gap-2 min-w-0">
               <Workflow className="h-3.5 w-3.5 text-[#f97316] shrink-0" />
               <h2 className="text-xs font-bold uppercase tracking-wider text-[var(--text-primary)] truncate">
                 AGENT TRACE
               </h2>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               {loading ? (
                 <span data-testid="live-timer-header" className="font-mono text-[10px] text-[#f97316] font-bold shrink-0 whitespace-nowrap animate-pulse">
                   {(liveElapsedMs / 1000).toFixed(2)}s live
@@ -946,7 +946,7 @@ export function ChatPage() {
               ) : null}
               <button
                 onClick={() => setTraceOpen(false)}
-                className="text-[var(--text-muted)] hover:text-[var(--text-primary)] p-0.5 rounded-[2px]"
+                className="text-[var(--text-muted)] hover:text-[var(--text-primary)] p-0.5 rounded-[2px] cursor-pointer shrink-0"
                 aria-label="Close Agent Trace"
               >
                 <PanelRightClose className="h-3.5 w-3.5" />
@@ -1019,7 +1019,7 @@ const MessageBubble = memo(function MessageBubble({ message, liveElapsedMs, onOp
   }, [isUser, message.isStreaming, message.content, message.citations, message.id]);
 
   return (
-    <div className="flex gap-3 font-mono">
+    <div className="flex gap-3 font-mono min-w-0 w-full">
       {/* Avatar Block */}
       <div
         className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-[2px] border ${
@@ -1033,7 +1033,7 @@ const MessageBubble = memo(function MessageBubble({ message, liveElapsedMs, onOp
         {isUser ? <User className="h-3 w-3" /> : <Bot className="h-3 w-3" />}
       </div>
 
-      <div className="flex-1 min-w-0 space-y-2">
+      <div className="flex-1 min-w-0 space-y-2 overflow-hidden">
         {/* Header and Timings */}
         <div className="text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-wider flex items-center justify-between flex-wrap gap-1">
           <div className="flex items-center gap-2 min-w-0">
@@ -1120,19 +1120,19 @@ const MessageBubble = memo(function MessageBubble({ message, liveElapsedMs, onOp
         ) : (
           <div
             data-testid={isUser ? "user-message-bubble" : "assistant-message-bubble"}
-            className={`prose prose-sm max-w-none break-words rounded-[3px] px-3.5 py-3 border ${
+            className={`prose prose-sm max-w-none break-words rounded-[3px] px-3.5 py-3 border min-w-0 overflow-hidden ${
               isUser
                 ? "border-[var(--panel-border)] bg-[var(--panel-inner)] text-[var(--text-primary)]"
                 : "border-[var(--panel-border)] bg-[var(--panel-bg)] text-[var(--text-primary)] shadow-xs"
             }`}
           >
-            <div className="text-xs leading-relaxed break-words text-[var(--text-primary)] space-y-2">
+            <div className="text-xs leading-relaxed break-words text-[var(--text-primary)] space-y-2 min-w-0 overflow-hidden">
               <ReactMarkdown
                 remarkPlugins={[remarkGfm, remarkMath]}
                 rehypePlugins={[rehypeKatex]}
                 components={{
                   table: ({ children }) => (
-                    <div className="overflow-x-auto my-3 max-w-full rounded-[2px] border border-[var(--panel-border)] bg-[var(--panel-inner)] shadow-xs">
+                    <div className="overflow-x-auto my-3 max-w-full rounded-[2px] border border-[var(--panel-border)] bg-[var(--panel-inner)] shadow-xs min-w-0">
                       <table className="min-w-full divide-y divide-[var(--panel-border)] text-xs font-mono text-[var(--text-primary)]">
                         {children}
                       </table>
@@ -1205,7 +1205,7 @@ const MessageBubble = memo(function MessageBubble({ message, liveElapsedMs, onOp
                     </strong>
                   ),
                   pre: ({ children }) => (
-                    <div className="overflow-x-auto my-2 max-w-full rounded-[2px] bg-[var(--panel-inner)] border border-[var(--panel-border)] p-2.5 font-mono text-xs text-[var(--text-secondary)]">
+                    <div className="overflow-x-auto my-2 max-w-full rounded-[2px] bg-[var(--panel-inner)] border border-[var(--panel-border)] p-2.5 font-mono text-xs text-[var(--text-secondary)] min-w-0">
                       {children}
                     </div>
                   ),
@@ -1303,15 +1303,15 @@ function ConfidenceDashboard({ steps }) {
   const isFaithful = verdict === "faithful";
 
   return (
-    <div className="flex flex-col gap-2 rounded-[3px] border border-[var(--panel-border)] bg-[var(--panel-inner)] p-2.5 mt-2 font-mono">
-      <div className="flex items-center justify-between flex-wrap gap-2">
+    <div className="flex flex-col gap-2 rounded-[3px] border border-[var(--panel-border)] bg-[var(--panel-inner)] p-2.5 mt-2 font-mono min-w-0 overflow-hidden">
+      <div className="flex items-center justify-between flex-wrap gap-2 min-w-0">
         <div className="flex items-center gap-2 min-w-0">
           <ShieldCheck
             className={`h-3.5 w-3.5 shrink-0 ${
               isFaithful ? "text-emerald-600" : "text-rose-600"
             }`}
           />
-          <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] truncate">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] truncate min-w-0">
             CRITIC FAITHFULNESS VERDICT
           </span>
         </div>

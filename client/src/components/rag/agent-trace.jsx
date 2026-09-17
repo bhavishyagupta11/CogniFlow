@@ -44,7 +44,7 @@ function StatusBadge({ status, durationMs, liveElapsedMs }) {
   const normStatus = (status || "").toLowerCase();
   if (normStatus === "queued") {
     return (
-      <span className="flex items-center gap-1 text-[10px] font-mono text-[var(--text-muted)] font-semibold">
+      <span className="flex items-center gap-1 text-[10px] font-mono text-[var(--text-muted)] font-semibold shrink-0">
         <Clock className="h-3 w-3 shrink-0" />
         <span>QUEUED</span>
       </span>
@@ -52,7 +52,7 @@ function StatusBadge({ status, durationMs, liveElapsedMs }) {
   }
   if (normStatus === "running") {
     return (
-      <span data-testid="running-stage-badge" className="flex items-center gap-1 text-[10px] font-mono text-[#f97316] font-bold">
+      <span data-testid="running-stage-badge" className="flex items-center gap-1 text-[10px] font-mono text-[#f97316] font-bold shrink-0">
         <Loader2 className="h-3 w-3 animate-spin shrink-0" />
         <span>RUNNING {formatMs(liveElapsedMs)}</span>
       </span>
@@ -60,7 +60,7 @@ function StatusBadge({ status, durationMs, liveElapsedMs }) {
   }
   if (normStatus === "skipped") {
     return (
-      <span className="flex items-center gap-1 text-[10px] font-mono text-[var(--text-muted)]">
+      <span className="flex items-center gap-1 text-[10px] font-mono text-[var(--text-muted)] shrink-0">
         <Minus className="h-3 w-3 shrink-0" />
         <span>SKIPPED</span>
       </span>
@@ -68,14 +68,14 @@ function StatusBadge({ status, durationMs, liveElapsedMs }) {
   }
   if (normStatus === "error" || normStatus === "failed") {
     return (
-      <span className="flex items-center gap-1 text-[10px] font-mono text-rose-500 font-bold">
+      <span className="flex items-center gap-1 text-[10px] font-mono text-rose-500 font-bold shrink-0">
         <AlertTriangle className="h-3 w-3 shrink-0" />
         <span>FAILED</span>
       </span>
     );
   }
   return (
-    <span className="flex items-center gap-1 text-[10px] font-mono text-emerald-600 font-semibold">
+    <span className="flex items-center gap-1 text-[10px] font-mono text-emerald-600 font-semibold shrink-0">
       <Check className="h-3 w-3 shrink-0 text-emerald-600" />
       <span>COMPLETED {formatMs(durationMs)}</span>
     </span>
@@ -146,7 +146,7 @@ const StepCard = memo(function StepCard({ step, index, devMode }) {
           : "border-[var(--panel-border)] bg-[var(--panel-inner)]"
       }`}
     >
-      <CollapsibleTrigger className="flex w-full items-center justify-between p-2.5 text-left hover:bg-[var(--panel-bg)] transition-colors cursor-pointer outline-none">
+      <CollapsibleTrigger className="flex w-full items-center justify-between p-2.5 text-left hover:bg-[var(--panel-bg)] transition-colors cursor-pointer outline-none min-w-0">
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
           {/* Numbered Square Marker */}
           <span className="flex h-5 w-7 items-center justify-center rounded-[2px] bg-[var(--panel-bg)] border border-[var(--panel-border)] text-[9px] font-mono font-bold text-[var(--text-secondary)] shrink-0">
@@ -154,8 +154,8 @@ const StepCard = memo(function StepCard({ step, index, devMode }) {
           </span>
 
           <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between gap-2 pr-2">
-              <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-[var(--text-primary)]">
+            <div className="flex items-center justify-between gap-2 pr-2 min-w-0">
+              <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-[var(--text-primary)] truncate">
                 {stageName}
               </span>
               <StatusBadge
@@ -165,7 +165,7 @@ const StepCard = memo(function StepCard({ step, index, devMode }) {
               />
             </div>
             {subtitle && (
-              <p className="text-[10px] font-mono text-[var(--text-muted)] truncate mt-0.5">
+              <p className="text-[10px] font-mono text-[var(--text-muted)] truncate mt-0.5 min-w-0">
                 {subtitle}
               </p>
             )}
@@ -180,7 +180,7 @@ const StepCard = memo(function StepCard({ step, index, devMode }) {
       </CollapsibleTrigger>
 
       <CollapsibleContent>
-        <div className="border-t border-[var(--panel-border)] px-3 py-2.5 text-xs font-mono space-y-2 bg-[var(--panel-bg)]">
+        <div className="border-t border-[var(--panel-border)] px-3 py-2.5 text-xs font-mono space-y-2 bg-[var(--panel-bg)] min-w-0 overflow-hidden">
           <StepDetails step={step} devMode={devMode} />
         </div>
       </CollapsibleContent>
@@ -325,13 +325,13 @@ export function AgentTrace({ steps = [], isLoading = false }) {
   }
 
   return (
-    <div className="flex flex-col h-full relative bg-[var(--panel-bg)] font-mono">
+    <div className="flex flex-col h-full relative bg-[var(--panel-bg)] font-mono min-w-0">
       {/* Console Header Bar */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--panel-border)] bg-[var(--panel-inner)] shrink-0">
-        <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] font-bold">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--panel-border)] bg-[var(--panel-inner)] shrink-0 min-w-0">
+        <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--text-muted)] font-bold truncate">
           EXECUTION CONSOLE ({steps.length} STAGES)
         </span>
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center space-x-2 shrink-0">
           <Switch id="dev-mode" checked={devMode} onCheckedChange={setDevMode} />
           <Label htmlFor="dev-mode" className="text-[10px] font-mono text-[var(--text-muted)] flex items-center cursor-pointer">
             <Code2 className="w-3 h-3 mr-1 text-[#f97316]" /> DEV
@@ -340,7 +340,7 @@ export function AgentTrace({ steps = [], isLoading = false }) {
       </div>
 
       {/* Steps List */}
-      <div className="flex-1 min-h-0 overflow-y-auto space-y-2 p-3">
+      <div className="flex-1 min-h-0 overflow-y-auto space-y-2 p-3 min-w-0">
         {steps.map((step, idx) => (
           <StepCard key={step.id || idx} step={step} index={idx} devMode={devMode} />
         ))}
