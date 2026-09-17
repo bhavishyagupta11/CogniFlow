@@ -19,6 +19,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { DocumentCoveragePanel } from "@/components/rag/document-coverage-panel";
+import { PdfPasswordDialog } from "@/components/documents/PdfPasswordDialog";
 import { toast } from "sonner";
 import {
   Send,
@@ -99,13 +100,19 @@ export function ChatPage() {
   } = useChatStore();
 
   const { setPdfSource, traceOpen, setTraceOpen } = useUIStore();
-  const { user, userId, accessKey, isAuthenticated } = useAuthStore();
+  const { user, userId, isAuthenticated } = useAuthStore();
   const { data: documents } = useDocumentsQuery();
   const uploadMutation = useUploadDocumentMutation();
   const [autoFollow, setAutoFollow] = useState(true);
   const autoFollowRef = useRef(true);
   const [liveElapsedMs, setLiveElapsedMs] = useState(0);
   const liveTimerRef = useRef(null);
+
+  // Contextual PDF Password Dialog state
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [pendingEncryptedFile, setPendingEncryptedFile] = useState(null);
+  const [pdfPasswordError, setPdfPasswordError] = useState("");
+  const [isDecrypting, setIsDecrypting] = useState(false);
 
   const messagesEndRef = useRef(null);
   const chatContainerRef = useRef(null);
@@ -618,18 +625,47 @@ export function ChatPage() {
     }
   }
 
-  // Quick file attachment handler
+  // Quick file attachment handler with password-protected PDF support
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || uploadMutation.isPending) return;
     const toastId = toast.loading(`Uploading & extracting ${file.name}...`);
     try {
-      await uploadMutation.mutateAsync({ file, key: accessKey });
+      await uploadMutation.mutateAsync({ file });
       toast.success(`${file.name} indexed and ready for retrieval.`, { id: toastId });
     } catch (err) {
-      toast.error(err.message || `Failed to upload ${file.name}`, { id: toastId });
+      if (err.code === "PASSWORD_REQUIRED" || err.code === "INCORRECT_PASSWORD") {
+        toast.dismiss(toastId);
+        setPendingEncryptedFile(file);
+        setPdfPasswordError(err.code === "INCORRECT_PASSWORD" ? "Incorrect PDF password. Please try again." : "");
+        setIsPasswordModalOpen(true);
+      } else {
+        toast.error(err.message || `Failed to upload ${file.name}`, { id: toastId });
+      }
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handlePasswordSubmit = async (password) => {
+    if (!pendingEncryptedFile) return;
+    setIsDecrypting(true);
+    setPdfPasswordError("");
+    const toastId = toast.loading(`Decrypting & extracting ${pendingEncryptedFile.name}...`);
+    try {
+      await uploadMutation.mutateAsync({ file: pendingEncryptedFile, password });
+      toast.success("Decrypted and indexed successfully.", { id: toastId });
+      setIsPasswordModalOpen(false);
+      setPendingEncryptedFile(null);
+    } catch (err) {
+      toast.dismiss(toastId);
+      if (err.code === "INCORRECT_PASSWORD" || err.code === "PASSWORD_REQUIRED") {
+        setPdfPasswordError("Incorrect PDF password. Please try again.");
+      } else {
+        setPdfPasswordError(err.message || "Failed to decrypt and process PDF.");
+      }
+    } finally {
+      setIsDecrypting(false);
     }
   };
 
@@ -958,6 +994,22 @@ export function ChatPage() {
           </div>
         </aside>
       )}
+
+      {/* Contextual PDF Password Dialog */}
+      <PdfPasswordDialog
+        open={isPasswordModalOpen}
+        onOpenChange={(open) => {
+          setIsPasswordModalOpen(open);
+          if (!open) {
+            setPendingEncryptedFile(null);
+            setPdfPasswordError("");
+          }
+        }}
+        fileName={pendingEncryptedFile?.name || "Encrypted Document"}
+        onSubmit={handlePasswordSubmit}
+        isDecrypting={isDecrypting}
+        errorMessage={pdfPasswordError}
+      />
     </div>
   );
 }

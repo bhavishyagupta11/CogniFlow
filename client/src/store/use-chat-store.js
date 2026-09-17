@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { persist, createJSONStorage } from "zustand/middleware";
 import {
   apiListConversations,
   apiGetConversation,
@@ -28,10 +28,8 @@ export const useChatStore = create()(
       setLoading: (loading) => set({ loading }),
       setActiveMode: (mode) => set({ activeMode: mode }),
 
-      // Fetch user's persistent conversations from server
+      // Fetch user's or guest's conversations from server
       fetchUserConversations: async (autoRestoreLatest = true) => {
-        const { isAuthenticated } = useAuthStore.getState();
-        if (!isAuthenticated) return;
         try {
           const res = await apiListConversations();
           if (res.ok && Array.isArray(res.conversations)) {
@@ -161,6 +159,7 @@ export const useChatStore = create()(
     }),
     {
       name: "cogniflow-missions-store",
+      storage: createJSONStorage(() => sessionStorage),
       partialize: (state) => ({
         missions: state.missions,
         activeMissionId: state.activeMissionId,

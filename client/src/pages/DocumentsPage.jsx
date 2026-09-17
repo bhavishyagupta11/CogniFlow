@@ -8,19 +8,26 @@ import { toast } from "sonner";
 import { useAuthStore } from "@/store/use-auth-store";
 import { useUIStore } from "@/store/use-ui-store";
 import { useDocumentsQuery, useUploadDocumentMutation, useDeleteDocumentMutation, useReindexDocumentMutation } from "@/api/documents";
+import { PdfPasswordDialog } from "@/components/documents/PdfPasswordDialog";
 
 export function DocumentsPage() {
     const [isDragging, setIsDragging] = useState(false);
     const [selectedDoc, setSelectedDoc] = useState(null);
     const [docToDelete, setDocToDelete] = useState(null);
     const fileInputRef = useRef(null);
-    const { accessKey, userId } = useAuthStore();
     const setPdfSource = useUIStore((s) => s.setPdfSource);
     const { data: documents = [], isLoading, refetch, isFetching } = useDocumentsQuery();
     const uploadMutation = useUploadDocumentMutation();
     const deleteMutation = useDeleteDocumentMutation();
     const reindexMutation = useReindexDocumentMutation();
     const [reindexingId, setReindexingId] = useState(null);
+
+    // Password-protected PDF state
+    const [pendingEncryptedFile, setPendingEncryptedFile] = useState(null);
+    const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+    const [pdfPasswordError, setPdfPasswordError] = useState("");
+    const [isDecrypting, setIsDecrypting] = useState(false);
+
     const completedDocs = documents.filter((d) => d.processingStatus === "completed" || d.indexStatus === "indexed");
     const totalChunks = completedDocs.reduce((acc, d) => acc + (d.chunkCount || 0), 0);
     const processingCount = documents.filter((d) => !["completed", "failed", "indexed"].includes(d.processingStatus)).length;
@@ -30,13 +37,43 @@ export function DocumentsPage() {
         for (const file of files) {
             const toastId = toast.loading(`Uploading & extracting ${file.name}...`);
             try {
-                await uploadMutation.mutateAsync({ file, key: accessKey });
+                await uploadMutation.mutateAsync({ file });
                 toast.success("Indexed and ready for retrieval.", { id: toastId });
                 refetch();
             }
             catch (err) {
-                toast.error(err.message || `Failed to upload ${file.name}`, { id: toastId });
+                if (err.code === "PASSWORD_REQUIRED" || err.code === "INCORRECT_PASSWORD") {
+                    toast.dismiss(toastId);
+                    setPendingEncryptedFile(file);
+                    setPdfPasswordError(err.code === "INCORRECT_PASSWORD" ? "Incorrect PDF password. Please try again." : "");
+                    setIsPasswordModalOpen(true);
+                } else {
+                    toast.error(err.message || `Failed to upload ${file.name}`, { id: toastId });
+                }
             }
+        }
+    };
+
+    const handlePasswordSubmit = async (password) => {
+        if (!pendingEncryptedFile) return;
+        setIsDecrypting(true);
+        setPdfPasswordError("");
+        const toastId = toast.loading(`Decrypting & extracting ${pendingEncryptedFile.name}...`);
+        try {
+            await uploadMutation.mutateAsync({ file: pendingEncryptedFile, password });
+            toast.success("Decrypted and indexed successfully.", { id: toastId });
+            setIsPasswordModalOpen(false);
+            setPendingEncryptedFile(null);
+            refetch();
+        } catch (err) {
+            toast.dismiss(toastId);
+            if (err.code === "INCORRECT_PASSWORD" || err.code === "PASSWORD_REQUIRED") {
+                setPdfPasswordError("Incorrect PDF password. Please try again.");
+            } else {
+                setPdfPasswordError(err.message || "Failed to decrypt and process PDF.");
+            }
+        } finally {
+            setIsDecrypting(false);
         }
     };
 
@@ -44,7 +81,7 @@ export function DocumentsPage() {
         const toastId = toast.loading(`Re-indexing ${doc.originalFilename}...`);
         setReindexingId(doc.id);
         try {
-            await reindexMutation.mutateAsync({ id: doc.id, key: accessKey });
+            await reindexMutation.mutateAsync({ id: doc.id });
             toast.success("Indexed and ready for retrieval.", { id: toastId });
             refetch();
         }
@@ -65,7 +102,7 @@ export function DocumentsPage() {
         const target = docToDelete;
         const toastId = toast.loading(`Deleting ${target.originalFilename}...`);
         try {
-            await deleteMutation.mutateAsync({ id: target.id, key: accessKey });
+            await deleteMutation.mutateAsync({ id: target.id });
             if (selectedDoc?.id === target.id) setSelectedDoc(null);
             setDocToDelete(null);
             toast.success(`${target.originalFilename} deleted and removed from index`, { id: toastId });
@@ -245,7 +282,7 @@ export function DocumentsPage() {
               ) : documents.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={8} className="text-center py-8 font-mono text-xs text-[var(--text-muted)]">
-                    NO CUSTOM DOCUMENTS UPLOADED YET. THE BUNDLED KNOWLEDGE BASE (6 FOUNDATIONAL PAPERS) IS LOADED BY DEFAULT.
+                    NO DOCUMENTS UPLOADED YET. UPLOAD A PDF OR TEXT DOCUMENT TO BEGIN RETRIEVAL.
                   </TableCell>
                 </TableRow>
               ) : (
@@ -459,5 +496,20 @@ export function DocumentsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>);
+
+      {/* Contextual Password Dialog for Encrypted PDFs */}
+      <PdfPasswordDialog
+        isOpen={isPasswordModalOpen}
+        file={pendingEncryptedFile}
+        errorMessage={pdfPasswordError}
+        isProcessing={isDecrypting}
+        onSubmit={handlePasswordSubmit}
+        onCancel={() => {
+          setIsPasswordModalOpen(false);
+          setPendingEncryptedFile(null);
+          setPdfPasswordError("");
+        }}
+      />
+    </div>
+  );
 }

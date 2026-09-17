@@ -10,19 +10,25 @@ function resolveApiUrl(path) {
 }
 
 export async function apiFetch(path, options = {}) {
-    const { token, userId, accessKey } = useAuthStore.getState();
+    const { token, sessionId } = useAuthStore.getState();
     const headers = new Headers(options.headers || {});
+
     if (token && !headers.has("Authorization")) {
         headers.set("Authorization", `Bearer ${token}`);
+    } else if (sessionId && !headers.has("x-session-id")) {
+        headers.set("x-session-id", sessionId);
     }
-    if (userId && !headers.has("x-user-id")) {
-        headers.set("x-user-id", userId);
-    }
-    if (accessKey && !headers.has("x-access-key")) {
-        headers.set("x-access-key", accessKey);
-    }
-    return fetch(resolveApiUrl(path), {
+
+    const res = await fetch(resolveApiUrl(path), {
         ...options,
         headers,
     });
+
+    // Capture server-issued guest session ID if unauthenticated
+    const serverSessionId = res.headers.get("X-Session-ID");
+    if (serverSessionId && !token && serverSessionId !== sessionId) {
+        useAuthStore.getState().setSessionId(serverSessionId);
+    }
+
+    return res;
 }

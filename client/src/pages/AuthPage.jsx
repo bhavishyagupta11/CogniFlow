@@ -13,17 +13,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   ShieldCheck,
-  Key,
   User,
   Eye,
   EyeOff,
-  Save,
   CheckCircle2,
   LogIn,
   UserPlus,
   LogOut,
   ArrowRight,
   AlertTriangle,
+  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuthStore } from "@/store/use-auth-store";
@@ -37,8 +36,7 @@ export function AuthPage() {
     login,
     register,
     logout,
-    accessKey,
-    setAccessKey,
+    sessionId,
   } = useAuthStore();
 
   const [activeTab, setActiveTab] = useState("login"); // 'login' | 'register'
@@ -57,10 +55,6 @@ export function AuthPage() {
   const [regConfirmPassword, setRegConfirmPassword] = useState("");
   const [showRegPassword, setShowRegPassword] = useState(false);
 
-  // Ingestion key state
-  const [localAccessKey, setLocalAccessKey] = useState(accessKey);
-  const [showAccessKey, setShowAccessKey] = useState(false);
-
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
     setAuthError("");
@@ -73,7 +67,7 @@ export function AuthPage() {
     try {
       await login(loginEmail.trim(), loginPassword);
       toast.success("Authenticated successfully. Restoring conversations…");
-      await useChatStore.getState().fetchUserConversations(true);
+      await useChatStore.getState().fetchUserConversations(false);
       navigate("/");
     } catch (err) {
       setAuthError(err.message || "Failed to sign in. Please verify your credentials.");
@@ -112,7 +106,7 @@ export function AuthPage() {
     try {
       await register(regName.trim(), regEmail.trim(), regPassword, regConfirmPassword);
       toast.success("Account created successfully!");
-      await useChatStore.getState().fetchUserConversations(true);
+      await useChatStore.getState().fetchUserConversations(false);
       navigate("/");
     } catch (err) {
       setAuthError(err.message || "Registration failed. Please try again.");
@@ -125,13 +119,7 @@ export function AuthPage() {
   const handleLogout = async () => {
     await logout();
     useChatStore.getState().clearUserChatState();
-    toast.info("Logged out. Session cleared.");
-  };
-
-  const handleSaveAccessKey = (e) => {
-    e.preventDefault();
-    setAccessKey(localAccessKey.trim());
-    toast.success("Access key updated successfully!");
+    toast.info("Logged out. Switched to fresh guest session.");
   };
 
   return (
@@ -140,10 +128,10 @@ export function AuthPage() {
       <div>
         <h2 className="font-mono text-base font-bold uppercase tracking-wider text-[var(--text-primary)] flex items-center gap-2">
           <ShieldCheck className="h-5 w-5 text-[#f97316]" />
-          CogniFlow Identity & Authentication
+          CogniFlow Identity & Persistence
         </h2>
         <p className="font-mono text-xs text-[var(--text-muted)] mt-1">
-          Secure per-user account access and multi-tenant evidence grounding.
+          Authentication is optional. Log in or create an account anytime to durably persist chats, missions, and uploaded documents.
         </p>
       </div>
 
@@ -158,7 +146,7 @@ export function AuthPage() {
                   Active Operator Account
                 </CardTitle>
                 <CardDescription className="font-mono text-[11px] text-[var(--text-muted)] mt-0.5">
-                  Authenticated session active. Conversations are privately isolated to this user.
+                  Authenticated session active. Conversations and documents are durably persisted to your account.
                 </CardDescription>
               </div>
               <div className="flex items-center gap-1.5 text-xs font-mono font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-[2px] border border-emerald-500/20">
@@ -217,199 +205,121 @@ export function AuthPage() {
               onClick={() => navigate("/")}
               className="rounded-[2px] font-mono text-xs bg-[#f97316] text-white font-bold uppercase hover:bg-[#ea580c] cursor-pointer"
             >
-              <span>GO TO CHAT WORKSPACE</span>
+              <span>CONTINUE CHATTING</span>
               <ArrowRight className="h-3.5 w-3.5 ml-1.5" />
             </Button>
           </CardFooter>
         </Card>
       ) : (
-        /* Unauthenticated View: Sign In / Sign Up */
-        <Card className="rounded-[4px] border border-[var(--panel-border)] bg-[var(--panel-bg)] shadow-xs">
-          {/* Tab Selection */}
-          <div className="flex border-b border-[var(--panel-border)]">
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab("login");
-                setAuthError("");
-              }}
-              className={`flex-1 py-2.5 px-4 font-mono text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
-                activeTab === "login"
-                  ? "border-b-2 border-[#f97316] text-[#f97316] bg-[var(--panel-inner)]/50"
-                  : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--panel-inner)]"
-              }`}
-            >
-              <LogIn className="h-3.5 w-3.5" />
-              <span>SIGN IN</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab("register");
-                setAuthError("");
-              }}
-              className={`flex-1 py-2.5 px-4 font-mono text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
-                activeTab === "register"
-                  ? "border-b-2 border-[#f97316] text-[#f97316] bg-[var(--panel-inner)]/50"
-                  : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--panel-inner)]"
-              }`}
-            >
-              <UserPlus className="h-3.5 w-3.5" />
-              <span>CREATE ACCOUNT</span>
-            </button>
+        /* Unauthenticated View: Guest Status + Sign In / Sign Up */
+        <div className="space-y-4">
+          {/* Guest Status Banner */}
+          <div className="p-4 rounded-[4px] border border-amber-500/30 bg-amber-500/5 flex items-start gap-3">
+            <Sparkles className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-mono text-xs font-bold text-amber-500 uppercase tracking-wider">
+                Guest Mode Active
+              </div>
+              <p className="font-mono text-xs text-[var(--text-secondary)] mt-0.5">
+                You can use CogniFlow without an account. Your chats and uploaded documents are kept temporarily in this session.
+                Sign in or create an account at any time to automatically save your current work.
+              </p>
+              {sessionId && (
+                <div className="font-mono text-[10px] text-[var(--text-muted)] mt-1.5 truncate">
+                  SESSION ID: <span className="text-[var(--text-secondary)]">{sessionId}</span>
+                </div>
+              )}
+            </div>
           </div>
 
-          {authError && (
-            <div className="m-4 p-3 rounded-[3px] border border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-400 font-mono text-xs flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4 shrink-0" />
-              <span>{authError}</span>
+          <Card className="rounded-[4px] border border-[var(--panel-border)] bg-[var(--panel-bg)] shadow-xs">
+            {/* Tab Selection */}
+            <div className="flex border-b border-[var(--panel-border)]">
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab("login");
+                  setAuthError("");
+                }}
+                className={`flex-1 py-2.5 px-4 font-mono text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
+                  activeTab === "login"
+                    ? "border-b-2 border-[#f97316] text-[#f97316] bg-[var(--panel-inner)]/50"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--panel-inner)]"
+                }`}
+              >
+                <LogIn className="h-3.5 w-3.5" />
+                <span>SIGN IN</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab("register");
+                  setAuthError("");
+                }}
+                className={`flex-1 py-2.5 px-4 font-mono text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
+                  activeTab === "register"
+                    ? "border-b-2 border-[#f97316] text-[#f97316] bg-[var(--panel-inner)]/50"
+                    : "text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--panel-inner)]"
+                }`}
+              >
+                <UserPlus className="h-3.5 w-3.5" />
+                <span>CREATE ACCOUNT</span>
+              </button>
             </div>
-          )}
 
-          {activeTab === "login" ? (
-            /* Login Form */
-            <form onSubmit={handleLoginSubmit}>
-              <CardContent className="space-y-4 pt-4">
-                <div className="space-y-1.5">
-                  <Label
-                    htmlFor="loginEmail"
-                    className="font-mono text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)]"
-                  >
-                    Email Address
-                  </Label>
-                  <Input
-                    id="loginEmail"
-                    type="email"
-                    required
-                    value={loginEmail}
-                    onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="operator@cogniflow.ai"
-                    className="rounded-[3px] border-[var(--panel-border)] bg-[var(--panel-inner)] font-mono text-xs text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[#f97316]"
-                  />
-                </div>
+            {authError && (
+              <div className="p-3 m-4 mb-0 rounded-[3px] bg-rose-500/10 border border-rose-500/20 text-rose-500 text-xs font-mono flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                <span>{authError}</span>
+              </div>
+            )}
 
-                <div className="space-y-1.5">
-                  <Label
-                    htmlFor="loginPassword"
-                    className="font-mono text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)]"
-                  >
-                    Password
-                  </Label>
-                  <div className="relative">
-                    <Input
-                      id="loginPassword"
-                      type={showLoginPassword ? "text" : "password"}
-                      required
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="rounded-[3px] border-[var(--panel-border)] bg-[var(--panel-inner)] font-mono text-xs text-[var(--text-primary)] placeholder:text-[var(--text-muted)] pr-10 focus:border-[#f97316]"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowLoginPassword(!showLoginPassword)}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
-                      tabIndex={-1}
-                    >
-                      {showLoginPassword ? (
-                        <EyeOff className="h-4 w-4" />
-                      ) : (
-                        <Eye className="h-4 w-4" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-              </CardContent>
-
-              <CardFooter className="border-t border-[var(--panel-border)] pt-4 flex justify-between items-center">
-                <div className="text-[10px] font-mono text-[var(--text-muted)]">
-                  Don't have an account?{" "}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveTab("register");
-                      setAuthError("");
-                    }}
-                    className="text-[#f97316] hover:underline cursor-pointer font-bold uppercase"
-                  >
-                    Sign Up
-                  </button>
-                </div>
-                <Button
-                  type="submit"
-                  size="sm"
-                  disabled={submitting}
-                  className="rounded-[2px] font-mono text-xs bg-[#f97316] text-white font-bold uppercase hover:bg-[#ea580c] cursor-pointer"
-                >
-                  {submitting ? "AUTHENTICATING…" : "SIGN IN"}
-                </Button>
-              </CardFooter>
-            </form>
-          ) : (
-            /* Register Form */
-            <form onSubmit={handleRegisterSubmit}>
-              <CardContent className="space-y-4 pt-4">
-                <div className="space-y-1.5">
-                  <Label
-                    htmlFor="regName"
-                    className="font-mono text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)]"
-                  >
-                    Full Name
-                  </Label>
-                  <Input
-                    id="regName"
-                    type="text"
-                    required
-                    value={regName}
-                    onChange={(e) => setRegName(e.target.value)}
-                    placeholder="Kevin Flynn"
-                    className="rounded-[3px] border-[var(--panel-border)] bg-[var(--panel-inner)] font-mono text-xs text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[#f97316]"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label
-                    htmlFor="regEmail"
-                    className="font-mono text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)]"
-                  >
-                    Email Address
-                  </Label>
-                  <Input
-                    id="regEmail"
-                    type="email"
-                    required
-                    value={regEmail}
-                    onChange={(e) => setRegEmail(e.target.value)}
-                    placeholder="operator@cogniflow.ai"
-                    className="rounded-[3px] border-[var(--panel-border)] bg-[var(--panel-inner)] font-mono text-xs text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[#f97316]"
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {activeTab === "login" ? (
+              /* Sign In Form */
+              <form onSubmit={handleLoginSubmit}>
+                <CardContent className="space-y-4 pt-4">
                   <div className="space-y-1.5">
                     <Label
-                      htmlFor="regPassword"
+                      htmlFor="loginEmail"
                       className="font-mono text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)]"
                     >
-                      Password (min 6 chars)
+                      Email Address
+                    </Label>
+                    <Input
+                      id="loginEmail"
+                      type="email"
+                      required
+                      value={loginEmail}
+                      onChange={(e) => setLoginEmail(e.target.value)}
+                      placeholder="user@example.com"
+                      className="rounded-[3px] border-[var(--panel-border)] bg-[var(--panel-inner)] font-mono text-xs text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[#f97316]"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label
+                      htmlFor="loginPassword"
+                      className="font-mono text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)]"
+                    >
+                      Password
                     </Label>
                     <div className="relative">
                       <Input
-                        id="regPassword"
-                        type={showRegPassword ? "text" : "password"}
+                        id="loginPassword"
+                        type={showLoginPassword ? "text" : "password"}
                         required
-                        value={regPassword}
-                        onChange={(e) => setRegPassword(e.target.value)}
+                        value={loginPassword}
+                        onChange={(e) => setLoginPassword(e.target.value)}
                         placeholder="••••••••"
                         className="rounded-[3px] border-[var(--panel-border)] bg-[var(--panel-inner)] font-mono text-xs text-[var(--text-primary)] placeholder:text-[var(--text-muted)] pr-10 focus:border-[#f97316]"
                       />
                       <button
                         type="button"
-                        onClick={() => setShowRegPassword(!showRegPassword)}
+                        onClick={() => setShowLoginPassword(!showLoginPassword)}
                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
                         tabIndex={-1}
                       >
-                        {showRegPassword ? (
+                        {showLoginPassword ? (
                           <EyeOff className="h-4 w-4" />
                         ) : (
                           <Eye className="h-4 w-4" />
@@ -417,119 +327,153 @@ export function AuthPage() {
                       </button>
                     </div>
                   </div>
+                </CardContent>
 
+                <CardFooter className="border-t border-[var(--panel-border)] pt-4 flex justify-between items-center">
+                  <div className="text-[10px] font-mono text-[var(--text-muted)]">
+                    Don't have an account?{" "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab("register");
+                        setAuthError("");
+                      }}
+                      className="text-[#f97316] hover:underline cursor-pointer font-bold uppercase"
+                    >
+                      Sign Up
+                    </button>
+                  </div>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={submitting}
+                    className="rounded-[2px] font-mono text-xs bg-[#f97316] text-white font-bold uppercase hover:bg-[#ea580c] cursor-pointer"
+                  >
+                    {submitting ? "AUTHENTICATING…" : "SIGN IN"}
+                  </Button>
+                </CardFooter>
+              </form>
+            ) : (
+              /* Sign Up Form */
+              <form onSubmit={handleRegisterSubmit}>
+                <CardContent className="space-y-4 pt-4">
                   <div className="space-y-1.5">
                     <Label
-                      htmlFor="regConfirmPassword"
+                      htmlFor="regName"
                       className="font-mono text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)]"
                     >
-                      Confirm Password
+                      Full Name
                     </Label>
                     <Input
-                      id="regConfirmPassword"
-                      type={showRegPassword ? "text" : "password"}
+                      id="regName"
+                      type="text"
                       required
-                      value={regConfirmPassword}
-                      onChange={(e) => setRegConfirmPassword(e.target.value)}
-                      placeholder="••••••••"
+                      value={regName}
+                      onChange={(e) => setRegName(e.target.value)}
+                      placeholder="Operator Name"
                       className="rounded-[3px] border-[var(--panel-border)] bg-[var(--panel-inner)] font-mono text-xs text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[#f97316]"
                     />
                   </div>
-                </div>
-              </CardContent>
 
-              <CardFooter className="border-t border-[var(--panel-border)] pt-4 flex justify-between items-center">
-                <div className="text-[10px] font-mono text-[var(--text-muted)]">
-                  Already have an account?{" "}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveTab("login");
-                      setAuthError("");
-                    }}
-                    className="text-[#f97316] hover:underline cursor-pointer font-bold uppercase"
+                  <div className="space-y-1.5">
+                    <Label
+                      htmlFor="regEmail"
+                      className="font-mono text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)]"
+                    >
+                      Email Address
+                    </Label>
+                    <Input
+                      id="regEmail"
+                      type="email"
+                      required
+                      value={regEmail}
+                      onChange={(e) => setRegEmail(e.target.value)}
+                      placeholder="operator@example.com"
+                      className="rounded-[3px] border-[var(--panel-border)] bg-[var(--panel-inner)] font-mono text-xs text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[#f97316]"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <Label
+                        htmlFor="regPassword"
+                        className="font-mono text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)]"
+                      >
+                        Password
+                      </Label>
+                      <div className="relative">
+                        <Input
+                          id="regPassword"
+                          type={showRegPassword ? "text" : "password"}
+                          required
+                          value={regPassword}
+                          onChange={(e) => setRegPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="rounded-[3px] border-[var(--panel-border)] bg-[var(--panel-inner)] font-mono text-xs text-[var(--text-primary)] placeholder:text-[var(--text-muted)] pr-10 focus:border-[#f97316]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowRegPassword(!showRegPassword)}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
+                          tabIndex={-1}
+                        >
+                          {showRegPassword ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label
+                        htmlFor="regConfirmPassword"
+                        className="font-mono text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)]"
+                      >
+                        Confirm Password
+                      </Label>
+                      <Input
+                        id="regConfirmPassword"
+                        type={showRegPassword ? "text" : "password"}
+                        required
+                        value={regConfirmPassword}
+                        onChange={(e) => setRegConfirmPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="rounded-[3px] border-[var(--panel-border)] bg-[var(--panel-inner)] font-mono text-xs text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[#f97316]"
+                      />
+                    </div>
+                  </div>
+                </CardContent>
+
+                <CardFooter className="border-t border-[var(--panel-border)] pt-4 flex justify-between items-center">
+                  <div className="text-[10px] font-mono text-[var(--text-muted)]">
+                    Already have an account?{" "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab("login");
+                        setAuthError("");
+                      }}
+                      className="text-[#f97316] hover:underline cursor-pointer font-bold uppercase"
+                    >
+                      Sign In
+                    </button>
+                  </div>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={submitting}
+                    className="rounded-[2px] font-mono text-xs bg-[#f97316] text-white font-bold uppercase hover:bg-[#ea580c] cursor-pointer"
                   >
-                    Sign In
-                  </button>
-                </div>
-                <Button
-                  type="submit"
-                  size="sm"
-                  disabled={submitting}
-                  className="rounded-[2px] font-mono text-xs bg-[#f97316] text-white font-bold uppercase hover:bg-[#ea580c] cursor-pointer"
-                >
-                  {submitting ? "REGISTERING…" : "CREATE ACCOUNT"}
-                </Button>
-              </CardFooter>
-            </form>
-          )}
-        </Card>
+                    {submitting ? "REGISTERING…" : "CREATE ACCOUNT"}
+                  </Button>
+                </CardFooter>
+              </form>
+            )}
+          </Card>
+        </div>
       )}
-
-      {/* Corpus Ingestion Access Key Configuration */}
-      <form onSubmit={handleSaveAccessKey}>
-        <Card className="rounded-[4px] border border-[var(--panel-border)] bg-[var(--panel-bg)] shadow-xs">
-          <CardHeader className="border-b border-[var(--panel-border)] pb-3">
-            <CardTitle className="font-mono text-xs font-bold uppercase tracking-wider text-[var(--text-primary)]">
-              Corpus Ingestion Credentials
-            </CardTitle>
-            <CardDescription className="font-mono text-[11px] text-[var(--text-muted)]">
-              Configure upload authorization token for document extraction and indexing endpoints.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4 pt-4">
-            <div className="space-y-1.5">
-              <Label
-                htmlFor="accessKey"
-                className="font-mono text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)] flex items-center gap-1.5"
-              >
-                <Key className="h-3.5 w-3.5 text-[#f97316]" />
-                Document Ingestion Access Key
-              </Label>
-              <div className="relative">
-                <Input
-                  id="accessKey"
-                  type={showAccessKey ? "text" : "password"}
-                  value={localAccessKey}
-                  onChange={(e) => setLocalAccessKey(e.target.value)}
-                  placeholder="Enter UPLOAD_ACCESS_KEY..."
-                  className="rounded-[3px] border-[var(--panel-border)] bg-[var(--panel-inner)] font-mono text-xs text-[var(--text-primary)] placeholder:text-[var(--text-muted)] pr-10 focus:border-[#f97316]"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowAccessKey(!showAccessKey)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)] cursor-pointer"
-                  tabIndex={-1}
-                >
-                  {showAccessKey ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
-                </button>
-              </div>
-              <p className="font-mono text-[10px] text-[var(--text-muted)]">
-                Required only if backend sets{" "}
-                <code className="font-mono text-[#f97316]">
-                  UPLOAD_ACCESS_KEY
-                </code>
-                .
-              </p>
-            </div>
-          </CardContent>
-
-          <CardFooter className="flex justify-end border-t border-[var(--panel-border)] pt-4">
-            <Button
-              type="submit"
-              size="sm"
-              className="rounded-[2px] font-mono text-xs bg-[#f97316] text-white font-bold uppercase hover:bg-[#ea580c] cursor-pointer"
-            >
-              <Save className="h-3.5 w-3.5 mr-1.5" />
-              SAVE ACCESS KEY
-            </Button>
-          </CardFooter>
-        </Card>
-      </form>
     </div>
   );
 }
