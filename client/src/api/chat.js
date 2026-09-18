@@ -1,7 +1,7 @@
 import { apiFetch } from "./client";
 import { safeParseSSEEvent } from "../lib/types";
 
-export async function streamChatQuery({ question, onEvent, signal, mode, conversationId }) {
+export async function streamChatQuery({ question, onEvent, signal, mode, conversationId, sourceDocumentIds }) {
     const res = await apiFetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -9,7 +9,9 @@ export async function streamChatQuery({ question, onEvent, signal, mode, convers
             question,
             mode,
             conversation_id: conversationId,
-            conversationId: conversationId
+            conversationId: conversationId,
+            source_document_ids: sourceDocumentIds,
+            sourceDocumentIds: sourceDocumentIds,
         }),
         signal,
     });
@@ -107,3 +109,34 @@ export async function apiSaveMessage(convId, { role, content, metadata }) {
     }
     return res.json();
 }
+
+export async function apiGetConversationSources(convId) {
+    const res = await apiFetch(`/api/chats/${convId}/sources`);
+    if (!res.ok) {
+        throw new Error(`Failed to get conversation sources (${res.status})`);
+    }
+    return res.json();
+}
+
+export async function apiAttachConversationSource(convId, documentId) {
+    const res = await apiFetch(`/api/chats/${convId}/sources`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document_id: documentId, documentId }),
+    });
+    if (!res.ok) {
+        throw new Error(`Failed to attach conversation source (${res.status})`);
+    }
+    return res.json();
+}
+
+export async function apiDetachConversationSource(convId, documentId) {
+    const res = await apiFetch(`/api/chats/${convId}/sources/${documentId}`, {
+        method: "DELETE",
+    });
+    if (!res.ok) {
+        throw new Error(`Failed to detach conversation source (${res.status})`);
+    }
+    return res.json();
+}
+

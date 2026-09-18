@@ -19,9 +19,9 @@ const NODES = [
     {
         id: "reranker",
         icon: ListOrdered,
-        label: "Reranker",
+        label: "Heuristic Rescorer",
         color: "bg-violet-100 text-violet-700 border-violet-300",
-        desc: "LLM-as-judge cross-encoder. Scores each candidate 0-10 on actual relevance.",
+        desc: "Deterministic Python/NumPy heuristic rescorer. Evaluates token overlap, exact phrase matches, and document diversity.",
     },
     {
         id: "analyzer",
@@ -107,23 +107,23 @@ export function ArchitectureDialog({ open, onOpenChange, }) {
               </li>
               <li>
                 <span className="font-mono text-[9px] uppercase px-1.5 py-0.2 rounded-[2px] bg-[var(--panel-bg)] border border-[var(--panel-border)] text-[var(--accent-amber)] mr-2">2. Embedding</span>
-                TF-IDF with stopword removal, L2-normalized sparse vectors. ~600 vocab terms over the bundled corpus.
+                Hybrid Lexical (TF-IDF/BM25) and Dense Semantic embeddings (MiniLM / Cloud Embeddings), strictly scoped to chat-attached documents.
               </li>
               <li>
                 <span className="font-mono text-[9px] uppercase px-1.5 py-0.2 rounded-[2px] bg-[var(--panel-bg)] border border-[var(--panel-border)] text-[var(--accent-amber)] mr-2">3. Retrieval</span>
-                Cosine similarity + MMR (λ=0.7) for diversity. Top-5 candidates.
+                Hybrid lexical/dense search + MMR (λ=0.7) for evidence diversity.
               </li>
               <li>
-                <span className="font-mono text-[9px] uppercase px-1.5 py-0.2 rounded-[2px] bg-[var(--panel-bg)] border border-[var(--panel-border)] text-[var(--accent-amber)] mr-2">4. Reranking</span>
-                LLM cross-encoder scores each candidate 0-10 with rationale. Top-4 kept.
+                <span className="font-mono text-[9px] uppercase px-1.5 py-0.2 rounded-[2px] bg-[var(--panel-bg)] border border-[var(--panel-border)] text-[var(--accent-amber)] mr-2">4. Heuristic Rescoring</span>
+                Deterministic Heuristic Rescorer evaluates token coverage, exact phrase matches, and document diversity.
               </li>
               <li>
                 <span className="font-mono text-[9px] uppercase px-1.5 py-0.2 rounded-[2px] bg-[var(--panel-bg)] border border-[var(--panel-border)] text-[var(--accent-amber)] mr-2">5. Generation</span>
-                LLM synthesizes grounded answer with inline [n] citations.
+                Grounded LLM answer with inline [En] citations, verifying evidence coverage.
               </li>
               <li>
                 <span className="font-mono text-[9px] uppercase px-1.5 py-0.2 rounded-[2px] bg-[var(--panel-bg)] border border-[var(--panel-border)] text-[var(--accent-amber)] mr-2">6. Verification</span>
-                LLM Critic checks for hallucinations, missing citations, misattribution. Can trigger a rewrite.
+                Claim grounding and citation verification before final answer emission.
               </li>
             </ul>
           </div>
@@ -154,8 +154,8 @@ export function ArchitectureDialog({ open, onOpenChange, }) {
             </h3>
             <ul className="text-[11px] space-y-1.5 text-emerald-300/90 list-disc pl-4 font-sans">
               <li>
-                <strong>Why TF-IDF + LLM reranker instead of dense embeddings?</strong>{" "}
-                Cost: TF-IDF is deterministic and instant; the cross-encoder only evaluates candidate chunks.
+                <strong>Why Hybrid Retrieval + Heuristic Rescorer?</strong>{" "}
+                Ultra-fast deterministic scoring (&lt;2ms) with zero extra LLM API latency, combining lexical token coverage, phrase matching, and document diversity.
               </li>
               <li>
                 <strong>Why a self-refine loop?</strong> The Analyzer ⇄ Critic

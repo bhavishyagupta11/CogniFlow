@@ -5,6 +5,9 @@ import {
   apiGetConversation,
   apiDeleteConversation,
   apiCreateConversation,
+  apiGetConversationSources,
+  apiAttachConversationSource,
+  apiDetachConversationSource,
 } from "@/api/chat";
 import { useAuthStore } from "./use-auth-store";
 
@@ -23,10 +26,59 @@ export const useChatStore = create()(
       activeMode: "adaptive_rag", // 'fast' | 'adaptive_rag' | 'deep_research' | 'general_chat'
       activeMissionId: null,
       missions: [], // Array of { id, title, mode, createdAt, messages, lastMessagePreview }
+      attachedSources: [], // Documents explicitly attached to this chat session
 
       setInput: (input) => set({ input }),
       setLoading: (loading) => set({ loading }),
       setActiveMode: (mode) => set({ activeMode: mode }),
+      setAttachedSources: (sources) => set({ attachedSources: Array.isArray(sources) ? sources : [] }),
+
+      fetchAttachedSources: async (convId) => {
+        if (!convId) return;
+        try {
+          const res = await apiGetConversationSources(convId);
+          if (res.ok && Array.isArray(res.sources)) {
+            set({ attachedSources: res.sources });
+          }
+        } catch {
+          // ignore
+        }
+      },
+
+      attachSource: async (doc) => {
+        if (!doc) return;
+        const docId = doc.id || doc.document_id || doc.documentId;
+        const current = get().attachedSources;
+        if (current.some((d) => (d.id || d.document_id || d.documentId) === docId)) {
+          return;
+        }
+        const updated = [...current, doc];
+        set({ attachedSources: updated });
+
+        const activeMissionId = get().activeMissionId;
+        if (activeMissionId) {
+          try {
+            await apiAttachConversationSource(activeMissionId, docId);
+          } catch (e) {
+            console.error("Failed to persist attached source:", e);
+          }
+        }
+      },
+
+      detachSource: async (docId) => {
+        const current = get().attachedSources;
+        const updated = current.filter((d) => (d.id || d.document_id || d.documentId) !== docId);
+        set({ attachedSources: updated });
+
+        const activeMissionId = get().activeMissionId;
+        if (activeMissionId) {
+          try {
+            await apiDetachConversationSource(activeMissionId, docId);
+          } catch (e) {
+            console.error("Failed to detach source on server:", e);
+          }
+        }
+      },
 
       // Fetch user's or guest's conversations from server
       fetchUserConversations: async (autoRestoreLatest = true) => {
@@ -91,11 +143,15 @@ export const useChatStore = create()(
           input: "",
           loading: false,
           activeMissionId: null,
+          attachedSources: [],
         });
       },
 
       loadMission: async (missionId) => {
         const { isAuthenticated } = useAuthStore.getState();
+        if (missionId) {
+          get().fetchAttachedSources(missionId);
+        }
         if (isAuthenticated) {
           try {
             const res = await apiGetConversation(missionId);
@@ -103,7 +159,7 @@ export const useChatStore = create()(
               set({
                 activeMissionId: res.conversation.id,
                 messages: res.conversation.messages || [],
-                activeMode: res.conversation.mode || "github_scout",
+                activeMode: res.conversation.mode || "adaptive_rag",
                 input: "",
                 loading: false,
               });
@@ -119,7 +175,7 @@ export const useChatStore = create()(
           set({
             activeMissionId: mission.id,
             messages: mission.messages || [],
-            activeMode: mission.mode || "github_scout",
+            activeMode: mission.mode || "adaptive_rag",
             input: "",
             loading: false,
           });
@@ -138,7 +194,7 @@ export const useChatStore = create()(
         set((state) => ({
           missions: state.missions.filter((m) => m.id !== missionId),
           ...(state.activeMissionId === missionId
-            ? { activeMissionId: null, messages: [], input: "" }
+            ? { activeMissionId: null, messages: [], input: "", attachedSources: [] }
             : {}),
         }));
       },
@@ -150,11 +206,12 @@ export const useChatStore = create()(
           input: "",
           loading: false,
           activeMissionId: null,
+          attachedSources: [],
         });
       },
 
       clearMessages: () => {
-        set({ messages: [], input: "", loading: false, activeMissionId: null });
+        set({ messages: [], input: "", loading: false, activeMissionId: null, attachedSources: [] });
       },
     }),
     {
@@ -165,6 +222,7 @@ export const useChatStore = create()(
         activeMissionId: state.activeMissionId,
         messages: state.messages,
         activeMode: state.activeMode,
+        attachedSources: state.attachedSources,
       }),
     }
   )

@@ -665,7 +665,7 @@ export function EvaluationPage() {
                   </span>
                 </div>
                 <div className="text-[10px] text-emerald-400 font-sans">
-                  Confidence floor triggering conditional cross-encoder rerank.
+                  Confidence floor triggering conditional heuristic rescorer.
                 </div>
               </div>
             </div>

@@ -20,6 +20,14 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { DocumentCoveragePanel } from "@/components/rag/document-coverage-panel";
 import { PdfPasswordDialog } from "@/components/documents/PdfPasswordDialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import {
   Send,
@@ -44,6 +52,8 @@ import {
   PanelRightOpen,
   Info,
   ArrowDown,
+  UploadCloud,
+  FileText,
 } from "lucide-react";
 
 export const COGNIFLOW_MODES = [
@@ -97,6 +107,9 @@ export function ChatPage() {
     setMessages,
     setActiveMode,
     fetchUserConversations,
+    attachedSources = [],
+    attachSource,
+    detachSource,
   } = useChatStore();
 
   const { setPdfSource, traceOpen, setTraceOpen } = useUIStore();
@@ -107,6 +120,11 @@ export function ChatPage() {
   const autoFollowRef = useRef(true);
   const [liveElapsedMs, setLiveElapsedMs] = useState(0);
   const liveTimerRef = useRef(null);
+
+  // Chat Sources picker and drag-drop state
+  const [isSourcePickerOpen, setIsSourcePickerOpen] = useState(false);
+  const [sourceSearchTerm, setSourceSearchTerm] = useState("");
+  const [isChatDragging, setIsChatDragging] = useState(false);
 
   // Contextual PDF Password Dialog state
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
@@ -136,14 +154,21 @@ export function ChatPage() {
     ? documents.filter((d) => d.processingStatus === "completed").length
     : 0;
 
-  const displayName =
-    user?.name ||
-    user?.email?.split("@")[0] ||
-    (!userId || userId === "dev-user"
-      ? "Kevin"
-      : userId.length > 14
-      ? userId.slice(0, 12) + "…"
-      : userId);
+  // Real user name for authenticated users, null for guest sessions
+  const greetingName =
+    isAuthenticated && (user?.name || user?.email?.split("@")[0])
+      ? user?.name || user?.email?.split("@")[0]
+      : null;
+
+  const filteredLibraryDocs = useMemo(() => {
+    if (!Array.isArray(documents)) return [];
+    if (!sourceSearchTerm.trim()) return documents;
+    const term = sourceSearchTerm.toLowerCase();
+    return documents.filter((d) => {
+      const name = (d.originalFilename || d.filename || "").toLowerCase();
+      return name.includes(term);
+    });
+  }, [documents, sourceSearchTerm]);
 
   const activeModeConfig =
     COGNIFLOW_MODES.find((m) => m.id === activeMode) || COGNIFLOW_MODES[1];
@@ -236,6 +261,7 @@ export function ChatPage() {
         question,
         mode: activeMode,
         conversationId: convIdToUse,
+        sourceDocumentIds: attachedSources.map((d) => d.id || d.document_id || d.documentId).filter(Boolean),
         signal: controller.signal,
         onEvent: (data) => {
           setMessages((prev) => {
@@ -625,14 +651,18 @@ export function ChatPage() {
     }
   }
 
-  // Quick file attachment handler with password-protected PDF support
+  // Quick file attachment handler with automatic attachment to current chat sources
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file || uploadMutation.isPending) return;
     const toastId = toast.loading(`Uploading & extracting ${file.name}...`);
     try {
-      await uploadMutation.mutateAsync({ file });
-      toast.success(`${file.name} indexed and ready for retrieval.`, { id: toastId });
+      const res = await uploadMutation.mutateAsync({ file });
+      const uploadedDoc = res.document || res;
+      if (uploadedDoc) {
+        attachSource(uploadedDoc);
+      }
+      toast.success(`${file.name} uploaded and attached to chat sources.`, { id: toastId });
     } catch (err) {
       if (err.code === "PASSWORD_REQUIRED" || err.code === "INCORRECT_PASSWORD") {
         toast.dismiss(toastId);
@@ -653,8 +683,12 @@ export function ChatPage() {
     setPdfPasswordError("");
     const toastId = toast.loading(`Decrypting & extracting ${pendingEncryptedFile.name}...`);
     try {
-      await uploadMutation.mutateAsync({ file: pendingEncryptedFile, password });
-      toast.success("Decrypted and indexed successfully.", { id: toastId });
+      const res = await uploadMutation.mutateAsync({ file: pendingEncryptedFile, password });
+      const uploadedDoc = res.document || res;
+      if (uploadedDoc) {
+        attachSource(uploadedDoc);
+      }
+      toast.success("Decrypted and attached to chat sources successfully.", { id: toastId });
       setIsPasswordModalOpen(false);
       setPendingEncryptedFile(null);
     } catch (err) {
@@ -666,6 +700,34 @@ export function ChatPage() {
       }
     } finally {
       setIsDecrypting(false);
+    }
+  };
+
+  const handleChatDrop = async (e) => {
+    e.preventDefault();
+    setIsChatDragging(false);
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (!files.length || uploadMutation.isPending) return;
+
+    for (const file of files) {
+      const toastId = toast.loading(`Uploading & attaching ${file.name}...`);
+      try {
+        const res = await uploadMutation.mutateAsync({ file });
+        const uploadedDoc = res.document || res;
+        if (uploadedDoc) {
+          attachSource(uploadedDoc);
+        }
+        toast.success(`Uploaded and attached ${file.name} to chat sources.`, { id: toastId });
+      } catch (err) {
+        if (err.code === "PASSWORD_REQUIRED" || err.code === "INCORRECT_PASSWORD") {
+          toast.dismiss(toastId);
+          setPendingEncryptedFile(file);
+          setPdfPasswordError(err.code === "INCORRECT_PASSWORD" ? "Incorrect PDF password. Please try again." : "");
+          setIsPasswordModalOpen(true);
+        } else {
+          toast.error(err.message || `Failed to upload ${file.name}`, { id: toastId });
+        }
+      }
     }
   };
 
@@ -730,12 +792,30 @@ export function ChatPage() {
           </div>
         </div>
 
-        {/* Scrollable Center Canvas with Auto-Follow Scroll Machine */}
+        {/* Scrollable Center Canvas with Auto-Follow Scroll Machine & Drag-and-Drop */}
         <div
           ref={chatContainerRef}
           onScroll={handleScroll}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setIsChatDragging(true);
+          }}
+          onDragLeave={(e) => {
+            if (e.currentTarget.contains(e.relatedTarget)) return;
+            setIsChatDragging(false);
+          }}
+          onDrop={handleChatDrop}
           className="flex-1 min-h-0 min-w-0 overflow-y-auto px-4 py-6 relative"
         >
+          {/* Drag & Drop Visual Overlay */}
+          {isChatDragging && (
+            <div className="absolute inset-0 z-40 bg-orange-500/10 backdrop-blur-xs border-2 border-dashed border-[#f97316] rounded-[4px] flex flex-col items-center justify-center pointer-events-none">
+              <UploadCloud className="h-10 w-10 text-[#f97316] animate-bounce mb-2" />
+              <p className="font-mono text-xs font-bold text-[#f97316] uppercase">Drop document to attach to this chat</p>
+              <p className="font-mono text-[10px] text-[var(--text-muted)] mt-1">PDF, TXT, or Markdown</p>
+            </div>
+          )}
+
           {/* Floating Jump to Latest Button (Specification Section 29) */}
           {!autoFollow && (
             <button
@@ -757,7 +837,7 @@ export function ChatPage() {
                   data-testid="greeting-pill"
                   className="rounded-[3px] border border-[var(--panel-border)] bg-[var(--panel-bg)] shadow-xs px-4 py-1.5 text-xs font-mono text-[var(--text-secondary)] flex items-center gap-1.5 transition-all"
                 >
-                  <span className="text-[#f97316] font-bold">Hi {displayName}</span>
+                  <span className="text-[#f97316] font-bold">{greetingName ? `Hi ${greetingName}` : "Hi there"}</span>
                   <span className="text-[var(--text-muted)]">·</span>
                   <span>how can I help you today?</span>
                 </div>
@@ -867,6 +947,61 @@ export function ChatPage() {
         {/* Bottom Workspace Composer Area */}
         <div className="border-t border-[var(--panel-border)] bg-[var(--panel-bg)]/90 backdrop-blur-xs px-4 py-3 shrink-0 select-none min-w-0">
           <div className="mx-auto max-w-3xl w-full min-w-0 space-y-2">
+            {/* Chat Sources Attachment Bar (CogniFlow Chat-Scoped Sources) */}
+            <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-[3px] bg-[var(--panel-inner)] border border-[var(--panel-border)] text-xs font-mono">
+              <div className="flex items-center gap-1.5 flex-wrap min-w-0 flex-1">
+                <div className="flex items-center gap-1 text-[10px] font-bold text-[var(--text-secondary)] shrink-0">
+                  <Paperclip className="h-3 w-3 text-[#f97316]" />
+                  <span>SOURCES ({attachedSources.length}):</span>
+                </div>
+
+                {attachedSources.length === 0 ? (
+                  <span className="text-[10px] text-[var(--text-muted)] italic truncate">
+                    {activeMode === "general_chat"
+                      ? "No sources needed (General Chat mode)"
+                      : "No documents attached · RAG retrieves strictly from chat sources"}
+                  </span>
+                ) : (
+                  attachedSources.map((source) => {
+                    const sId = source.id || source.document_id || source.documentId;
+                    const sName = source.originalFilename || source.filename || source.documentTitle || "document.pdf";
+                    return (
+                      <span
+                        key={sId}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-[2px] bg-[var(--panel-bg)] border border-[var(--panel-border)] text-[10px] font-mono text-[var(--text-primary)] group hover:border-[#f97316] transition-colors"
+                      >
+                        <FileText className="h-2.5 w-2.5 text-[#f97316] shrink-0" />
+                        <span className="max-w-[140px] truncate" title={sName}>
+                          {sName}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => detachSource(sId)}
+                          className="hover:text-rose-500 text-[var(--text-muted)] ml-0.5 cursor-pointer font-bold leading-none"
+                          title={`Detach ${sName} from chat`}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    );
+                  })
+                )}
+              </div>
+
+              <div className="flex items-center gap-1 shrink-0">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  type="button"
+                  onClick={() => setIsSourcePickerOpen(true)}
+                  className="h-6 px-2 text-[10px] font-mono border border-dashed border-[var(--panel-border)] hover:border-[#f97316] text-[var(--text-secondary)] hover:text-[var(--text-primary)] rounded-[2px] cursor-pointer"
+                >
+                  <Plus className="h-3 w-3 text-[#f97316] mr-1" />
+                  <span>Attach</span>
+                </Button>
+              </div>
+            </div>
+
             {/* Functional Mode Tabs (Specification Section 52) */}
             <div
               className="flex items-center gap-1.5 overflow-x-auto pb-1"
@@ -1010,6 +1145,114 @@ export function ChatPage() {
         isDecrypting={isDecrypting}
         errorMessage={pdfPasswordError}
       />
+
+      {/* Attach Sources Document Picker Dialog */}
+      <Dialog open={isSourcePickerOpen} onOpenChange={setIsSourcePickerOpen}>
+        <DialogContent className="max-w-lg border-[var(--panel-border)] bg-[var(--panel-bg)] font-mono">
+          <DialogHeader>
+            <DialogTitle className="text-xs font-mono font-bold uppercase tracking-wider text-[var(--text-primary)] flex items-center gap-2">
+              <Paperclip className="h-4 w-4 text-[#f97316]" />
+              ATTACH SOURCES TO CHAT
+            </DialogTitle>
+            <DialogDescription className="text-[11px] font-mono text-[var(--text-muted)]">
+              Select documents from your library to scope retrieval for this conversation.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            {/* Search Filter */}
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-[var(--text-muted)]" />
+              <input
+                type="text"
+                value={sourceSearchTerm}
+                onChange={(e) => setSourceSearchTerm(e.target.value)}
+                placeholder="Filter documents by name..."
+                className="w-full bg-[var(--panel-inner)] border border-[var(--panel-border)] rounded-[2px] pl-8 pr-3 py-1.5 text-xs text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-hidden focus:border-[var(--border-focus)]"
+              />
+            </div>
+
+            {/* Document List */}
+            <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
+              {!documents || documents.length === 0 ? (
+                <div className="text-center py-6 text-xs text-[var(--text-muted)]">
+                  No documents in your library yet. Upload a document to attach it.
+                </div>
+              ) : filteredLibraryDocs.length === 0 ? (
+                <div className="text-center py-6 text-xs text-[var(--text-muted)]">
+                  No documents match "{sourceSearchTerm}".
+                </div>
+              ) : (
+                filteredLibraryDocs.map((doc) => {
+                  const dId = doc.id || doc.document_id || doc.documentId;
+                  const isAttached = attachedSources.some(
+                    (s) => (s.id || s.document_id || s.documentId) === dId
+                  );
+
+                  return (
+                    <div
+                      key={dId}
+                      className="flex items-center justify-between p-2 rounded-[2px] border border-[var(--panel-border)] bg-[var(--panel-inner)] hover:border-[#f97316]/50 transition-colors"
+                    >
+                      <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
+                        <FileText className="h-4 w-4 text-[#f97316] shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs text-[var(--text-primary)] truncate font-semibold">
+                            {doc.originalFilename || doc.filename || "document.pdf"}
+                          </p>
+                          <p className="text-[10px] text-[var(--text-muted)]">
+                            {doc.pageCount || 1} pages · {doc.chunkCount || 0} chunks
+                          </p>
+                        </div>
+                      </div>
+
+                      <Button
+                        size="sm"
+                        variant={isAttached ? "secondary" : "outline"}
+                        onClick={() => {
+                          if (isAttached) {
+                            detachSource(dId);
+                          } else {
+                            attachSource(doc);
+                          }
+                        }}
+                        className={`h-7 px-2.5 text-[10px] font-mono rounded-[2px] cursor-pointer ${
+                          isAttached
+                            ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold"
+                            : "border-[var(--panel-border)] hover:border-[#f97316] hover:text-[#f97316]"
+                        }`}
+                      >
+                        {isAttached ? "ATTACHED ✓" : "+ ATTACH"}
+                      </Button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <DialogFooter className="border-t border-[var(--panel-border)] pt-2 flex items-center justify-between">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+              className="h-7 text-[10px] font-mono text-[#f97316] hover:bg-[#f97316]/10 rounded-[2px] cursor-pointer"
+            >
+              <UploadCloud className="h-3 w-3 mr-1" />
+              Upload New File
+            </Button>
+
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setIsSourcePickerOpen(false)}
+              className="h-7 px-3 bg-[#f97316] hover:bg-[#ea580c] text-white text-[10px] font-mono font-bold rounded-[2px] cursor-pointer"
+            >
+              DONE
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

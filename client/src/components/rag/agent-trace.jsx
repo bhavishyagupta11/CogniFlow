@@ -9,11 +9,12 @@ const STAGE_NUMBERS = {
   router: "01",
   retriever: "02",
   reranker: "03",
-  generator: "04",
+  draft_generator: "04",
   verifier: "05",
   critic: "05",
   analyzer: "04",
-  citations: "04",
+  generator: "06",
+  citations: "07",
   coordinator: "00",
   loader: "02",
   mapper: "03",
@@ -23,7 +24,8 @@ const STAGE_NUMBERS = {
 const AGENT_LABELS = {
   router: "ROUTER",
   retriever: "RETRIEVER",
-  reranker: "RERANKER",
+  reranker: "HEURISTIC RESCORER",
+  draft_generator: "DRAFT GENERATOR",
   generator: "FINAL GENERATOR",
   verifier: "VERIFIER",
   critic: "CRITIC",
@@ -118,7 +120,9 @@ const StepCard = memo(function StepCard({ step, index, devMode }) {
     subtitle = `${count} candidates${mmr} · hybrid / RRF`;
   } else if (step.agent === "reranker" && step.output) {
     const topScore = typeof step.output.topScore === "number" ? `top score ${step.output.topScore.toFixed(3)}` : "re-scored";
-    subtitle = `NumPy scored · ${topScore}`;
+    subtitle = `Heuristic Rescored · ${topScore}`;
+  } else if (step.agent === "draft_generator") {
+    subtitle = "Draft synthesis for verification";
   } else if (step.agent === "generator" && step.output) {
     const cites = step.output.citationsUsed !== undefined ? `${step.output.citationsUsed} citations` : "";
     subtitle = cites ? `Evidence grounded · ${cites}` : "Grounded generation";

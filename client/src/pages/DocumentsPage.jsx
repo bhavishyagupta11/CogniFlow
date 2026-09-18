@@ -3,10 +3,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { UploadCloud, FileText, Trash2, Loader2, CheckCircle2, AlertCircle, RefreshCw, ExternalLink, HardDrive, Layers, Clock, Info, ShieldCheck, Database } from "lucide-react";
+import { UploadCloud, FileText, Trash2, Loader2, CheckCircle2, AlertCircle, RefreshCw, ExternalLink, HardDrive, Layers, Clock, Info, ShieldCheck, Database, Paperclip, Check } from "lucide-react";
 import { toast } from "sonner";
 import { useAuthStore } from "@/store/use-auth-store";
 import { useUIStore } from "@/store/use-ui-store";
+import { useChatStore } from "@/store/use-chat-store";
 import { useDocumentsQuery, useUploadDocumentMutation, useDeleteDocumentMutation, useReindexDocumentMutation } from "@/api/documents";
 import { PdfPasswordDialog } from "@/components/documents/PdfPasswordDialog";
 
@@ -16,6 +17,7 @@ export function DocumentsPage() {
     const [docToDelete, setDocToDelete] = useState(null);
     const fileInputRef = useRef(null);
     const setPdfSource = useUIStore((s) => s.setPdfSource);
+    const { attachSource, detachSource, attachedSources = [] } = useChatStore();
     const { data: documents = [], isLoading, refetch, isFetching } = useDocumentsQuery();
     const uploadMutation = useUploadDocumentMutation();
     const deleteMutation = useDeleteDocumentMutation();
@@ -307,6 +309,38 @@ export function DocumentsPage() {
                       {new Date(doc.uploadedAt).toLocaleDateString()}
                     </TableCell>
                     <TableCell className="text-right space-x-1">
+                      {(() => {
+                        const isAttached = attachedSources.some(
+                          (s) => (s.id || s.document_id || s.documentId) === doc.id
+                        );
+                        return (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className={`h-7 px-2 rounded-[2px] transition-colors ${
+                              isAttached
+                                ? "text-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20"
+                                : "text-[var(--text-muted)] hover:text-[#f97316] hover:bg-[#f97316]/10"
+                            }`}
+                            onClick={() => {
+                              if (isAttached) {
+                                detachSource(doc.id);
+                                toast.info(`Removed "${doc.originalFilename}" from chat sources.`);
+                              } else {
+                                attachSource(doc);
+                                toast.success(`Attached "${doc.originalFilename}" to current chat.`);
+                              }
+                            }}
+                            title={isAttached ? "Attached to current chat (click to detach)" : "Attach to current chat"}
+                          >
+                            {isAttached ? (
+                              <Check className="h-3.5 w-3.5 text-emerald-500" />
+                            ) : (
+                              <Paperclip className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                        );
+                      })()}
                       <Button variant="ghost" size="sm" className="h-7 px-2 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--panel-bg)] rounded-[2px]" onClick={() => setSelectedDoc(doc)} title="Document Details">
                         <Info className="h-3.5 w-3.5"/>
                       </Button>
@@ -399,6 +433,34 @@ export function DocumentsPage() {
           )}
 
           <DialogFooter className="flex justify-between sm:justify-between w-full">
+            {selectedDoc && (() => {
+              const isAttached = attachedSources.some(
+                (s) => (s.id || s.document_id || s.documentId) === selectedDoc.id
+              );
+              return (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className={`font-mono text-xs mr-2 ${
+                    isAttached
+                      ? "border-emerald-500/40 text-emerald-500 hover:bg-emerald-500/10"
+                      : "border-[#f97316]/40 text-[#f97316] hover:bg-[#f97316]/10"
+                  }`}
+                  onClick={() => {
+                    if (isAttached) {
+                      detachSource(selectedDoc.id);
+                      toast.info(`Removed "${selectedDoc.originalFilename}" from chat sources.`);
+                    } else {
+                      attachSource(selectedDoc);
+                      toast.success(`Attached "${selectedDoc.originalFilename}" to current chat.`);
+                    }
+                  }}
+                >
+                  <Paperclip className="h-3.5 w-3.5 mr-1" />
+                  {isAttached ? "DETACH FROM CHAT" : "ATTACH TO CHAT"}
+                </Button>
+              );
+            })()}
             {selectedDoc?.mimeType === "application/pdf" && (
               <Button size="sm" variant="outline" className="font-mono text-xs border-[var(--accent-amber)]/40 text-[var(--accent-amber)] hover:bg-[var(--accent-amber)]/10" onClick={() => {
                 setPdfSource({
