@@ -39,6 +39,8 @@ export function PdfViewer({ documentId, initialPage = 1 }) {
       httpHeaders: {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(sessionId ? { "x-session-id": sessionId } : {}),
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
       },
     };
   }, [documentId, token, sessionId]);

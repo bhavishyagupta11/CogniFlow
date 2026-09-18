@@ -256,20 +256,32 @@ def create_byte_range_response(
     media_type: str,
     safe_filename: str,
     range_header: Optional[str] = None,
-    session_id: Optional[str] = None
+    session_id: Optional[str] = None,
+    is_guest: bool = False
 ) -> Response:
     """
     Constructs an RFC 7233 compliant byte response supporting:
     - Normal 200 OK with full content and Content-Length
     - Range requests (bytes=start-end) returning 206 Partial Content and Content-Range
     - Safe handling of out-of-bounds ranges returning 416 Range Not Satisfiable
+    - Strict non-conditional headers for guest in-memory documents to prevent 304 Not Modified
     """
     total_len = len(content_bytes)
+
+    if is_guest:
+        cache_control = "no-store, no-cache, must-revalidate, max-age=0"
+    else:
+        cache_control = "private, no-transform, max-age=300"
+
     common_headers = {
         "Content-Disposition": f'inline; filename="{safe_filename}"',
         "Accept-Ranges": "bytes",
-        "Cache-Control": "private, no-transform, max-age=300",
+        "Cache-Control": cache_control,
     }
+    if is_guest:
+        common_headers["Pragma"] = "no-cache"
+        common_headers["Expires"] = "0"
+
     if session_id:
         common_headers["X-Session-ID"] = session_id
 
@@ -306,15 +318,19 @@ def create_byte_range_response(
         else:
             raise ValueError("Invalid range specification")
     except ValueError:
+        err_headers = dict(common_headers)
+        err_headers["Content-Range"] = f"bytes */{total_len}"
         return Response(
             status_code=416,
-            headers={"Content-Range": f"bytes */{total_len}"}
+            headers=err_headers
         )
 
     if start < 0 or start >= total_len or end < start:
+        err_headers = dict(common_headers)
+        err_headers["Content-Range"] = f"bytes */{total_len}"
         return Response(
             status_code=416,
-            headers={"Content-Range": f"bytes */{total_len}"}
+            headers=err_headers
         )
 
     end = min(end, total_len - 1)
@@ -378,13 +394,14 @@ async def view_document_pdf(
         if not media_type or media_type == "application/octet-stream":
             media_type = "application/pdf" if safe_filename.endswith(".pdf") else "text/plain"
 
-        # Return actual PDF bytes directly with Range support (never written to R2)
+        # Return actual PDF bytes directly with Range support (never written to R2, never cached with 304)
         return create_byte_range_response(
             content_bytes=raw_bytes,
             media_type=media_type,
             safe_filename=safe_filename,
             range_header=range_header,
-            session_id=identity.session_id
+            session_id=identity.session_id,
+            is_guest=True
         )
 
     # If not found in caller's session, check if it belongs to ANY other active guest session

@@ -493,3 +493,128 @@ def test_http_range_request_support():
     )
     assert bad_range.status_code == 416
     assert bad_range.headers.get("content-range") == f"bytes */{total_len}"
+
+
+# ==============================================================================
+# 16. Conditional Request & Non-Conditional Cache Policy Tests (Prevent 304)
+# ==============================================================================
+
+def test_guest_pdf_conditional_request_and_cache_control_never_returns_304():
+    """
+    Verifies that guest PDF serving:
+    Test 1: Normal request -> 200, application/pdf, starts %PDF-, Cache-Control: no-store
+    Test 2: If-None-Match header -> returns 200 with full PDF body (never 304)
+    Test 3: If-Modified-Since header -> returns 200 with full PDF body (never 304)
+    Test 4: Range request bytes=0-99 -> 206, length 100, Content-Range present
+    Test 5: Guest serving does not write to R2, local disk, or durable DB
+    Test 6: Cross-guest isolation returns 403 Forbidden
+    Test 7: Authenticated user R2 storage behavior remains unchanged
+    """
+    from backend.services.db_service import get_db_connection
+    from backend.config import EXTRACTED_DIR, UPLOADS_DIR
+
+    # Setup Guest A
+    resp_a = client.get("/api/auth/guest-session")
+    session_a = resp_a.json()["sessionId"]
+
+    pdf_bytes = create_sample_pdf_bytes("Conditional request and non-cacheable guest document text.")
+    upload_res = client.post(
+        "/api/documents",
+        headers={"x-session-id": session_a},
+        files={"file": ("guest_research.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
+    )
+    assert upload_res.status_code in [200, 201]
+    doc_id = upload_res.json()["document"]["id"]
+
+    # Test 1: Normal request with no conditional headers
+    norm_res = client.get(
+        f"/api/documents/{doc_id}/raw",
+        headers={"x-session-id": session_a}
+    )
+    assert norm_res.status_code == 200
+    assert norm_res.headers["content-type"] == "application/pdf"
+    assert norm_res.headers["content-disposition"].startswith("inline")
+    assert "no-store" in norm_res.headers.get("cache-control", "").lower()
+    assert norm_res.content.startswith(b"%PDF-")
+    assert norm_res.content == pdf_bytes
+
+    # Test 2: If-None-Match with arbitrary ETag -> must NEVER return 304
+    etag_res = client.get(
+        f"/api/documents/{doc_id}/raw",
+        headers={
+            "x-session-id": session_a,
+            "If-None-Match": '"W/123456789abcdef"',
+        }
+    )
+    assert etag_res.status_code == 200, f"Expected 200, got {etag_res.status_code} (must never return 304)"
+    assert etag_res.headers["content-type"] == "application/pdf"
+    assert etag_res.content.startswith(b"%PDF-")
+    assert len(etag_res.content) == len(pdf_bytes)
+    assert etag_res.content == pdf_bytes
+
+    # Test 3: If-Modified-Since with HTTP date -> must NEVER return 304
+    ims_res = client.get(
+        f"/api/documents/{doc_id}/raw",
+        headers={
+            "x-session-id": session_a,
+            "If-Modified-Since": "Wed, 21 Oct 2026 07:28:00 GMT",
+        }
+    )
+    assert ims_res.status_code == 200, f"Expected 200, got {ims_res.status_code} (must never return 304)"
+    assert ims_res.headers["content-type"] == "application/pdf"
+    assert ims_res.content.startswith(b"%PDF-")
+    assert len(ims_res.content) == len(pdf_bytes)
+    assert ims_res.content == pdf_bytes
+
+    # Test 4: Range request bytes=0-99 -> 206 Partial Content
+    range_res = client.get(
+        f"/api/documents/{doc_id}/raw",
+        headers={
+            "x-session-id": session_a,
+            "Range": "bytes=0-99",
+            "If-None-Match": '"W/cached-etag"',
+        }
+    )
+    assert range_res.status_code == 206, f"Expected 206, got {range_res.status_code}"
+    assert range_res.headers.get("content-range") == f"bytes 0-99/{len(pdf_bytes)}"
+    assert len(range_res.content) == 100
+    assert range_res.content == pdf_bytes[:100]
+
+    # Test 5: Verify guest PDF serving does not write to R2, local disk, or durable DB
+    assert not (EXTRACTED_DIR / f"{doc_id}.json").exists()
+    assert not (UPLOADS_DIR / f"{doc_id}.pdf").exists()
+    assert not storage_service.exists(f"uploads/{doc_id}/original")
+    with get_db_connection() as conn:
+        row = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
+        assert row is None
+
+    # Test 6: Verify cross-guest isolation still returns 403
+    resp_b = client.get("/api/auth/guest-session")
+    session_b = resp_b.json()["sessionId"]
+    cross_res = client.get(
+        f"/api/documents/{doc_id}/raw",
+        headers={"x-session-id": session_b}
+    )
+    assert cross_res.status_code == 403
+
+    # Test 7: Verify authenticated user R2 behavior remains unchanged
+    user_email = f"r2_test_{secrets.token_hex(4)}@cogniflow.test"
+    user = create_user(user_email, hash_password("Password123!"), "R2 Tester")
+    token = create_access_token({"sub": user["id"], "email": user_email, "role": "user"})
+    auth_upload = client.post(
+        "/api/documents",
+        headers={"Authorization": f"Bearer {token}"},
+        files={"file": ("auth_r2.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
+    )
+    assert auth_upload.status_code in [200, 201]
+    auth_doc_id = auth_upload.json()["document"]["id"]
+
+    auth_view = client.get(
+        f"/api/documents/{auth_doc_id}/raw",
+        headers={"Authorization": f"Bearer {token}"},
+        follow_redirects=False
+    )
+    assert auth_view.status_code in [200, 307]
+    if auth_view.status_code == 307:
+        assert "r2.cloudflarestorage.com" in auth_view.headers.get("location", "")
+
