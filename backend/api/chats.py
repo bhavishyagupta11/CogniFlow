@@ -9,7 +9,8 @@ from fastapi import APIRouter, HTTPException, Header, Response, status
 
 from backend.models import (
     ConversationCreateRequest,
-    MessageSaveRequest
+    MessageSaveRequest,
+    ConversationSourceAttachRequest
 )
 from backend.services.db_service import (
     create_conversation,
@@ -17,7 +18,11 @@ from backend.services.db_service import (
     get_conversation,
     delete_conversation,
     save_message,
-    update_conversation_title
+    update_conversation_title,
+    attach_conversation_source,
+    detach_conversation_source,
+    list_conversation_source_documents,
+    get_document
 )
 from backend.services.auth_service import get_optional_user
 from backend.services.guest_session_service import guest_session_service
@@ -195,4 +200,99 @@ async def append_message(
         )
 
     return {"ok": True, "message": msg}
+
+
+@router.get("/{conv_id}/sources")
+async def get_chat_sources(
+    conv_id: str,
+    response: Response,
+    authorization: Optional[str] = Header(None),
+    x_user_id: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None)
+):
+    """Retrieve all documents attached as sources to this conversation."""
+    user_info = await get_optional_user(authorization=authorization, x_user_id=x_user_id, x_session_id=x_session_id)
+    if user_info.get("session_id"):
+        response.headers["X-Session-ID"] = user_info["session_id"]
+
+    if user_info["is_authenticated"]:
+        conv = get_conversation(conv_id=conv_id, user_id=user_info["id"])
+        if not conv:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
+        sources = list_conversation_source_documents(conv_id)
+    else:
+        conv = guest_session_service.get_conversation(user_info["id"], conv_id)
+        if not conv:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
+        sources = guest_session_service.list_conversation_source_documents(user_info["id"], conv_id)
+
+    return {"ok": True, "sources": sources}
+
+
+@router.post("/{conv_id}/sources")
+async def attach_chat_source(
+    conv_id: str,
+    req: ConversationSourceAttachRequest,
+    response: Response,
+    authorization: Optional[str] = Header(None),
+    x_user_id: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None)
+):
+    """Attach a document from the user's library or guest session to this conversation."""
+    user_info = await get_optional_user(authorization=authorization, x_user_id=x_user_id, x_session_id=x_session_id)
+    if user_info.get("session_id"):
+        response.headers["X-Session-ID"] = user_info["session_id"]
+
+    doc_id = req.document_id
+    if user_info["is_authenticated"]:
+        conv = get_conversation(conv_id=conv_id, user_id=user_info["id"])
+        if not conv:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
+        doc = get_document(doc_id)
+        if not doc or (doc.get("owner_id") != user_info["id"] and not user_info.get("is_admin")):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found or unauthorized.")
+        attach_conversation_source(conv_id, doc_id)
+        sources = list_conversation_source_documents(conv_id)
+    else:
+        conv = guest_session_service.get_conversation(user_info["id"], conv_id)
+        if not conv:
+            conv = guest_session_service.save_conversation(user_info["id"], conv_id, "New Mission")
+        doc = guest_session_service.get_document(user_info["id"], doc_id)
+        if not doc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found or unauthorized.")
+        guest_session_service.attach_conversation_source(user_info["id"], conv_id, doc_id)
+        sources = guest_session_service.list_conversation_source_documents(user_info["id"], conv_id)
+
+    return {"ok": True, "sources": sources}
+
+
+@router.delete("/{conv_id}/sources/{doc_id}")
+async def detach_chat_source(
+    conv_id: str,
+    doc_id: str,
+    response: Response,
+    authorization: Optional[str] = Header(None),
+    x_user_id: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None)
+):
+    """Detach a document from this conversation."""
+    user_info = await get_optional_user(authorization=authorization, x_user_id=x_user_id, x_session_id=x_session_id)
+    if user_info.get("session_id"):
+        response.headers["X-Session-ID"] = user_info["session_id"]
+
+    if user_info["is_authenticated"]:
+        conv = get_conversation(conv_id=conv_id, user_id=user_info["id"])
+        if not conv:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
+        detach_conversation_source(conv_id, doc_id)
+        sources = list_conversation_source_documents(conv_id)
+    else:
+        conv = guest_session_service.get_conversation(user_info["id"], conv_id)
+        if not conv:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
+        guest_session_service.detach_conversation_source(user_info["id"], conv_id, doc_id)
+        sources = guest_session_service.list_conversation_source_documents(user_info["id"], conv_id)
+
+    return {"ok": True, "sources": sources}
+
 

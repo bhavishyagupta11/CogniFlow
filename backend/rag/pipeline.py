@@ -57,7 +57,9 @@ async def run_rag_pipeline(
     mode: str = "adaptive_rag",
     request: Optional[Request] = None,
     document_id: Optional[str] = None,
-    sync_mode: bool = False
+    sync_mode: bool = False,
+    conversation_id: Optional[str] = None,
+    source_document_ids: Optional[List[str]] = None
 ) -> AsyncGenerator[str, None]:
     """
     Authoritative CogniFlow Execution Engine:
@@ -71,6 +73,20 @@ async def run_rag_pipeline(
         user_mode = "fast"
     elif user_mode in ["github_scout", "live_web"]:
         user_mode = "deep_research"
+
+    # Resolve active chat sources
+    allowed_document_ids: Optional[List[str]] = None
+    if source_document_ids is not None:
+        allowed_document_ids = list(source_document_ids)
+    elif conversation_id:
+        if user_id.startswith("guest_"):
+            from backend.services.guest_session_service import guest_session_service
+            allowed_document_ids = guest_session_service.get_conversation_sources(user_id, conversation_id)
+        else:
+            from backend.services.db_service import get_conversation_sources
+            allowed_document_ids = get_conversation_sources(conversation_id)
+    elif document_id:
+        allowed_document_ids = [document_id]
 
     request_id = f"req-{int(time.time() * 1000)}"
     tracker.request_id = request_id
@@ -100,6 +116,37 @@ async def run_rag_pipeline(
     # Early client disconnect check
     if request and await request.is_disconnected():
         yield sse_event({"type": "cancelled", "reason": "Client disconnected before pipeline start"})
+        return
+
+    # Check for empty sources in chat-scoped RAG mode (conversations with 0 sources attached)
+    if user_mode != "general_chat" and allowed_document_ids is not None and len(allowed_document_ids) == 0:
+        no_sources_msg = "No sources are attached to this chat. Attach a document from your library or upload a file to begin document-grounded retrieval."
+        answerability_dict = AnswerabilityResult(
+            status="not_answerable",
+            answerable=False,
+            confidence=0.0,
+            supportingChunkIds=[],
+            missingInformation=["No sources attached to this conversation."],
+            conflictingChunkIds=[],
+            reason=no_sources_msg
+        ).model_dump()
+        yield sse_event({"type": "route_selected", "mode": user_mode, "complexity": "simple", "reason": "No attached sources in conversation."})
+        yield sse_event({"type": "answerability_result", "answerability": answerability_dict})
+        yield sse_event({"type": "text_delta", "delta": no_sources_msg, "content": no_sources_msg})
+        total_ms = tracker.total_duration_ms()
+        result = {
+            "question": question,
+            "answer": no_sources_msg,
+            "sources": [],
+            "steps": steps,
+            "totalDurationMs": total_ms,
+            "plan": {"mode": user_mode},
+            "confidence": {"score": 0.0, "sufficient": False, "reason": no_sources_msg},
+            "answerability": answerability_dict,
+            "verdict": "not_answerable",
+            "telemetry": tracker.to_dict()
+        }
+        yield sse_event({"type": "pipeline_complete", "result": result})
         return
 
     # ─────────────────────────────────────────────────────────────────
@@ -231,12 +278,28 @@ async def run_rag_pipeline(
     })
 
     # Document-targeting resolution
-    targeting = resolve_document_target(question, owner_id=user_id, explicit_document_id=document_id)
+    targeting = resolve_document_target(
+        question,
+        owner_id=user_id,
+        explicit_document_id=document_id,
+        allowed_document_ids=allowed_document_ids
+    )
     target_doc_id = targeting.get("resolved_document_id")
     target_filename = targeting.get("resolved_filename")
     is_doc_specific = targeting.get("is_document_specific", False)
     target_scope = targeting.get("scope", "general_corpus")
     is_ambiguous = targeting.get("ambiguous", False)
+
+    # If no target_doc_id was explicitly extracted from question text, but exactly 1 source is attached, target that source
+    if not target_doc_id and allowed_document_ids and len(allowed_document_ids) == 1:
+        target_doc_id = allowed_document_ids[0]
+        from backend.services.document_service import get_manifest
+        for m in get_manifest():
+            if (m.get("id") or m.get("document_id")) == target_doc_id:
+                target_filename = m.get("originalFilename") or m.get("filename")
+                is_doc_specific = True
+                target_scope = "DOCUMENT"
+                break
 
     # Classify query intent for document summary intent
     decision: QueryComplexityDecision = classify_query(question, mode=user_mode)
@@ -513,7 +576,8 @@ async def run_rag_pipeline(
         max_candidates=initial_top_k,
         owner_id=user_id,
         document_id=target_doc_id,
-        scope=target_scope
+        scope=target_scope,
+        allowed_document_ids=allowed_document_ids
     )
 
     formatted_sources = []

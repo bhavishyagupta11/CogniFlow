@@ -18,11 +18,22 @@ async def retrieve_single_query(
     k: int = 5,
     owner_id: Optional[str] = None,
     document_id: Optional[str] = None,
-    scope: Optional[str] = None
+    scope: Optional[str] = None,
+    allowed_document_ids: Optional[List[str]] = None
 ) -> List[Dict[str, Any]]:
-    """Runs vector store search in an async worker, supporting document_id and scope scoping."""
+    """Runs vector store search in an async worker, supporting document_id, scope, and allowed_document_ids scoping."""
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, vector_store.search, query, k, owner_id, document_id, scope)
+    return await loop.run_in_executor(
+        None,
+        lambda: vector_store.search(
+            query=query,
+            k=k,
+            owner_id=owner_id,
+            document_id=document_id,
+            scope=scope,
+            allowed_document_ids=allowed_document_ids
+        )
+    )
 
 
 def reciprocal_rank_fusion(
@@ -65,18 +76,29 @@ async def parallel_retrieve(
     max_candidates: int = 5,
     owner_id: Optional[str] = None,
     document_id: Optional[str] = None,
-    scope: Optional[str] = None
+    scope: Optional[str] = None,
+    allowed_document_ids: Optional[List[str]] = None
 ) -> List[Dict[str, Any]]:
     """
     Executes concurrent retrieval across all subqueries using asyncio.gather.
-    Supports document_id and scope scoped search for document-targeted queries.
+    Supports document_id, scope, and allowed_document_ids scoped search.
     Returns fused and deduplicated candidates.
     """
     if not queries:
         return []
 
     # Run subqueries concurrently
-    tasks = [retrieve_single_query(q, k=max_candidates + 2, owner_id=owner_id, document_id=document_id, scope=scope) for q in queries]
+    tasks = [
+        retrieve_single_query(
+            q,
+            k=max_candidates + 2,
+            owner_id=owner_id,
+            document_id=document_id,
+            scope=scope,
+            allowed_document_ids=allowed_document_ids
+        )
+        for q in queries
+    ]
     subquery_results = await asyncio.gather(*tasks)
 
     if len(queries) == 1:

@@ -107,11 +107,14 @@ class GuestSessionService:
                     "mode": mode,
                     "created_at": now_iso,
                     "updated_at": now_iso,
-                    "messages": []
+                    "messages": [],
+                    "sources": []
                 }
             else:
                 session.conversations[conv_id]["title"] = title
                 session.conversations[conv_id]["updated_at"] = now_iso
+                if "sources" not in session.conversations[conv_id]:
+                    session.conversations[conv_id]["sources"] = []
             return session.conversations[conv_id]
 
     def get_conversations(self, session_id: str) -> List[Dict[str, Any]]:
@@ -131,7 +134,8 @@ class GuestSessionService:
                     "createdAt": c.get("created_at"),
                     "updatedAt": c.get("updated_at"),
                     "messageCount": len(msgs),
-                    "lastMessagePreview": last_preview
+                    "lastMessagePreview": last_preview,
+                    "sources": list(c.get("sources", []))
                 })
             return sorted(result, key=lambda x: x.get("updatedAt", ""), reverse=True)
 
@@ -140,7 +144,13 @@ class GuestSessionService:
             session = self.get_session(session_id)
             if not session:
                 return None
-            return session.conversations.get(conv_id)
+            conv = session.conversations.get(conv_id)
+            if not conv:
+                return None
+            conv_copy = dict(conv)
+            conv_copy["sources"] = list(conv.get("sources", []))
+            conv_copy["source_documents"] = self.list_conversation_source_documents(session_id, conv_id)
+            return conv_copy
 
     def delete_conversation(self, session_id: str, conv_id: str) -> bool:
         with self._lock:
@@ -149,6 +159,53 @@ class GuestSessionService:
                 return False
             del session.conversations[conv_id]
             return True
+
+    # Conversation Sources
+    def get_conversation_sources(self, session_id: str, conv_id: str) -> List[str]:
+        with self._lock:
+            session = self.get_session(session_id)
+            if not session or conv_id not in session.conversations:
+                return []
+            return list(session.conversations[conv_id].get("sources", []))
+
+    def attach_conversation_source(self, session_id: str, conv_id: str, doc_id: str) -> None:
+        with self._lock:
+            session = self.get_session(session_id)
+            if not session:
+                session = self.create_server_session()
+                session_id = session.session_id
+            if conv_id not in session.conversations:
+                self.save_conversation(session_id, conv_id, "New Mission")
+            sources = session.conversations[conv_id].setdefault("sources", [])
+            if doc_id not in sources:
+                sources.append(doc_id)
+            session.conversations[conv_id]["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    def detach_conversation_source(self, session_id: str, conv_id: str, doc_id: str) -> None:
+        with self._lock:
+            session = self.get_session(session_id)
+            if not session or conv_id not in session.conversations:
+                return
+            sources = session.conversations[conv_id].get("sources", [])
+            if doc_id in sources:
+                sources.remove(doc_id)
+            session.conversations[conv_id]["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    def list_conversation_source_documents(self, session_id: str, conv_id: str) -> List[Dict[str, Any]]:
+        with self._lock:
+            session = self.get_session(session_id)
+            if not session or conv_id not in session.conversations:
+                return []
+            doc_ids = session.conversations[conv_id].get("sources", [])
+            res = []
+            for did in doc_ids:
+                if did in session.documents:
+                    d = dict(session.documents[did])
+                    d.pop("raw_bytes", None)
+                    d.pop("pages", None)
+                    d.pop("chunks", None)
+                    res.append(d)
+            return res
 
     # Messages
     def save_message(
@@ -234,6 +291,10 @@ class GuestSessionService:
                 return False
             del session.documents[doc_id]
             session.chunks = [c for c in session.chunks if (c.get("documentId") or c.get("document_id")) != doc_id]
+            for c in session.conversations.values():
+                sources = c.get("sources", [])
+                if doc_id in sources:
+                    sources.remove(doc_id)
             return True
 
     def find_document_any_session(self, doc_id: str) -> Optional[Dict[str, Any]]:

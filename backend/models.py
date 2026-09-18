@@ -13,6 +13,8 @@ class ChatQueryRequest(BaseModel):
     query: Optional[str] = None
     mode: Optional[str] = "adaptive_rag"  # fast | adaptive_rag | deep_research | general_chat
     document_id: Optional[str] = None
+    source_document_ids: Optional[List[str]] = None
+    sourceDocumentIds: Optional[List[str]] = None
     conversation_id: Optional[str] = None
     conversationId: Optional[str] = None
     sync: Optional[bool] = False
@@ -22,6 +24,19 @@ class ChatQueryRequest(BaseModel):
 
     def get_conversation_id(self) -> Optional[str]:
         return (self.conversation_id or self.conversationId or None)
+
+    def get_source_document_ids(self) -> Optional[List[str]]:
+        if self.source_document_ids is not None:
+            return self.source_document_ids
+        if self.sourceDocumentIds is not None:
+            return self.sourceDocumentIds
+        if self.document_id:
+            return [self.document_id]
+        return None
+
+
+class ConversationSourceAttachRequest(BaseModel):
+    document_id: str
 
 
 class QueryComplexityDecision(BaseModel):

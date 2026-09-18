@@ -46,17 +46,14 @@ TARGET_PATTERNS = [
 
 def clean_corpus():
     print("[CleanCorpus] Inspecting current database documents...")
-    all_docs = db_service.list_documents()
+    all_docs = db_service.list_documents(is_admin=True)
     print(f"[CleanCorpus] Found {len(all_docs)} documents in database.")
 
     to_delete = []
     for d in all_docs:
         doc_id = d.get("id") or d.get("document_id")
         orig_name = d.get("original_filename") or d.get("originalFilename") or ""
-        # Match test/dev documents or system_public
-        is_match = any(pattern.lower() in orig_name.lower() for pattern in TARGET_PATTERNS)
-        if is_match or d.get("owner_id") in ["system_public", "dev-user", "public"]:
-            to_delete.append((doc_id, orig_name))
+        to_delete.append((doc_id, orig_name))
 
     print(f"[CleanCorpus] Identified {len(to_delete)} documents for complete removal.")
 
@@ -87,16 +84,18 @@ def clean_corpus():
                 except Exception:
                     pass
 
-    # Also wipe all orphaned chunks, embeddings, and summaries
+    # Also wipe all orphaned chunks, embeddings, summaries, and documents
     with get_db_connection() as conn:
         cur = conn.cursor() if hasattr(conn, "cursor") else conn
         try:
+            cur.execute("DELETE FROM conversation_documents")
             cur.execute("DELETE FROM document_chunks")
             cur.execute("DELETE FROM document_embeddings")
             cur.execute("DELETE FROM document_summaries")
+            cur.execute("DELETE FROM documents")
             if hasattr(conn, "commit"):
                 conn.commit()
-            print("[CleanCorpus] Cleaned all chunks, embeddings, and summaries.")
+            print("[CleanCorpus] Cleaned all documents, chunks, embeddings, and summaries.")
         except Exception as e:
             print(f"[CleanCorpus] Error cleaning chunk tables: {e}")
 

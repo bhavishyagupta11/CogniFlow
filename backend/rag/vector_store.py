@@ -352,7 +352,7 @@ class VectorStore:
             matched_names = set()
             for c in self.chunks:
                 c_owner = c.get("owner_id") or c.get("ownerId")
-                if c_owner in [active_owner, "system_public", "public"] or (active_owner in ["dev-user", "user_default"] and c_owner in ["dev-user", "user_default"]):
+                if c_owner == active_owner or (active_owner in ["dev-user", "user_default"] and c_owner in ["dev-user", "user_default"]):
                     doc_id = c.get("document_id") or c.get("documentId")
                     if doc_id:
                         matched_docs.add(doc_id)
@@ -432,18 +432,27 @@ class VectorStore:
         self,
         owner_id: Optional[str] = None,
         document_id: Optional[str] = None,
-        scope: Optional[str] = None
+        scope: Optional[str] = None,
+        allowed_document_ids: Optional[List[str]] = None
     ) -> List[int]:
         """Returns list of chunk indices strictly matching tenant, user, and document scope."""
+        # Chat-scoped allowed document IDs: if explicitly passed as empty list, no sources are attached
+        if allowed_document_ids is not None and len(allowed_document_ids) == 0:
+            return []
+
         active_owner = owner_id or "dev-user"
         valid_owners = [active_owner]
         if active_owner in ["dev-user", "user_default"]:
-            valid_owners.extend(["dev-user", "user_default", "system_public", "public"])
+            valid_owners.extend(["dev-user", "user_default"])
 
         matched_indices = []
         for idx in range(self.total_docs):
             chunk = self.chunks[idx]
             chunk_doc_id = chunk.get("documentId") or chunk.get("document_id")
+
+            # Chat-scoped allowed document IDs
+            if allowed_document_ids is not None and chunk_doc_id not in allowed_document_ids:
+                continue
 
             # Document-id scoped isolation
             if document_id and chunk_doc_id != document_id:
@@ -559,7 +568,8 @@ class VectorStore:
         k: int = 3,
         owner_id: Optional[str] = None,
         document_id: Optional[str] = None,
-        scope: Optional[str] = None
+        scope: Optional[str] = None,
+        allowed_document_ids: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """Pure Lexical Retrieval: Sparse TF-IDF Cosine Similarity."""
         self.ensure_synced()
@@ -580,7 +590,7 @@ class VectorStore:
                 q_vec = q_vec / q_norm
 
             scores = np.dot(self.chunk_vectors, q_vec.T).flatten()
-            candidates = self._filter_candidate_indices(owner_id, document_id, scope)
+            candidates = self._filter_candidate_indices(owner_id, document_id, scope, allowed_document_ids)
             scored = [(idx, float(scores[idx])) for idx in candidates]
             scored.sort(key=lambda x: x[1], reverse=True)
             return [self._format_result_chunk(idx, sc) for idx, sc in scored[:k]]
@@ -591,13 +601,14 @@ class VectorStore:
         k: int = 3,
         owner_id: Optional[str] = None,
         document_id: Optional[str] = None,
-        scope: Optional[str] = None
+        scope: Optional[str] = None,
+        allowed_document_ids: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """Pure Semantic Retrieval: Dense LSA TruncatedSVD Concept Vector Cosine Similarity."""
         self.ensure_synced()
         with self._lock:
             if self.total_docs == 0 or self.dense_vectors is None or self.svd_model is None:
-                return self.search_lexical(query, k, owner_id, document_id, scope)
+                return self.search_lexical(query, k, owner_id, document_id, scope, allowed_document_ids)
             tokens = self._tokenize(query)
             if not tokens:
                 return []
@@ -621,9 +632,9 @@ class VectorStore:
                     q_dense = q_dense / qd_norm
                 scores = np.dot(self.dense_vectors, q_dense.T).flatten()
             except Exception:
-                return self.search_lexical(query, k, owner_id, document_id, scope)
+                return self.search_lexical(query, k, owner_id, document_id, scope, allowed_document_ids)
 
-            candidates = self._filter_candidate_indices(owner_id, document_id, scope)
+            candidates = self._filter_candidate_indices(owner_id, document_id, scope, allowed_document_ids)
             scored = [(idx, float(scores[idx])) for idx in candidates]
             scored.sort(key=lambda x: x[1], reverse=True)
             return [self._format_result_chunk(idx, sc) for idx, sc in scored[:k]]
@@ -634,7 +645,8 @@ class VectorStore:
         k: int = 3,
         owner_id: Optional[str] = None,
         document_id: Optional[str] = None,
-        scope: Optional[str] = None
+        scope: Optional[str] = None,
+        allowed_document_ids: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """Hybrid Retrieval: Convex Combination & Reciprocal Rank Fusion (RRF) of Lexical + Semantic."""
         self.ensure_synced()
@@ -646,7 +658,7 @@ class VectorStore:
                 return []
 
             active_owner = owner_id or "dev-user"
-            candidates = self._filter_candidate_indices(owner_id, document_id, scope)
+            candidates = self._filter_candidate_indices(owner_id, document_id, scope, allowed_document_ids)
             if not candidates:
                 return []
 
@@ -724,27 +736,28 @@ class VectorStore:
         k: int = 3,
         owner_id: Optional[str] = None,
         document_id: Optional[str] = None,
-        scope: Optional[str] = None
+        scope: Optional[str] = None,
+        allowed_document_ids: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """Pure Neural Dense Semantic Retrieval using configured neural embedding provider (Mandates 8, 9)."""
         from backend.rag.embeddings import embedding_manager
         neural_provider = embedding_manager.get_neural_provider()
         if not neural_provider or not neural_provider.api_key:
-            return self.search_semantic(query, k, owner_id=owner_id, document_id=document_id, scope=scope)
+            return self.search_semantic(query, k, owner_id=owner_id, document_id=document_id, scope=scope, allowed_document_ids=allowed_document_ids)
 
         try:
             q_dense = neural_provider.embed_query(query)
             if q_dense is None or np.linalg.norm(q_dense) == 0:
-                return self.search_semantic(query, k, owner_id=owner_id, document_id=document_id, scope=scope)
+                return self.search_semantic(query, k, owner_id=owner_id, document_id=document_id, scope=scope, allowed_document_ids=allowed_document_ids)
 
-            candidates = self._filter_candidate_indices(owner_id, document_id, scope)
+            candidates = self._filter_candidate_indices(owner_id, document_id, scope, allowed_document_ids)
             if not candidates:
                 return []
 
             # If candidates are large, pre-filter with lexical to top candidates to bound latency and token usage
             cand_limit = max(k * 2, 8)
             if len(candidates) > cand_limit:
-                lex_results = self.search_lexical(query, k=cand_limit, owner_id=owner_id, document_id=document_id, scope=scope)
+                lex_results = self.search_lexical(query, k=cand_limit, owner_id=owner_id, document_id=document_id, scope=scope, allowed_document_ids=allowed_document_ids)
                 cand_ids = {c.get("id") or c.get("chunk_id") for c in lex_results}
                 cand_indices = [idx for idx in candidates if (self.chunks[idx].get("id") or self.chunks[idx].get("chunk_id")) in cand_ids]
             else:
@@ -753,7 +766,7 @@ class VectorStore:
             cand_texts = [self.chunks[idx].get("content") or self.chunks[idx].get("text") or "" for idx in cand_indices]
             cand_vecs = neural_provider.embed_documents(cand_texts)
             if len(cand_vecs) == 0:
-                return self.search_semantic(query, k, owner_id=owner_id, document_id=document_id, scope=scope)
+                return self.search_semantic(query, k, owner_id=owner_id, document_id=document_id, scope=scope, allowed_document_ids=allowed_document_ids)
 
             scores = np.dot(cand_vecs, q_dense)
             scored = [(cand_indices[i], float(scores[i])) for i in range(len(cand_indices))]
@@ -761,7 +774,7 @@ class VectorStore:
             return [self._format_result_chunk(idx, sc) for idx, sc in scored[:k]]
         except Exception as e:
             print(f"[VectorStore] Neural semantic retrieval fallback to LSA: {e}")
-            return self.search_semantic(query, k, owner_id=owner_id, document_id=document_id, scope=scope)
+            return self.search_semantic(query, k, owner_id=owner_id, document_id=document_id, scope=scope, allowed_document_ids=allowed_document_ids)
 
     def search(
         self,
@@ -770,7 +783,8 @@ class VectorStore:
         owner_id: Optional[str] = None,
         document_id: Optional[str] = None,
         scope: Optional[str] = None,
-        strategy: Optional[str] = None
+        strategy: Optional[str] = None,
+        allowed_document_ids: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
         """
         Authoritative Retrieval Entry Point.
@@ -779,12 +793,12 @@ class VectorStore:
         from backend.config import RETRIEVAL_STRATEGY
         strat = (strategy or RETRIEVAL_STRATEGY or "hybrid").lower().strip()
         if strat == "lexical":
-            return self.search_lexical(query, k, owner_id=owner_id, document_id=document_id, scope=scope)
+            return self.search_lexical(query, k, owner_id=owner_id, document_id=document_id, scope=scope, allowed_document_ids=allowed_document_ids)
         elif strat in ["neural_semantic", "neural", "dense"]:
-            return self.search_neural_semantic(query, k, owner_id=owner_id, document_id=document_id, scope=scope)
+            return self.search_neural_semantic(query, k, owner_id=owner_id, document_id=document_id, scope=scope, allowed_document_ids=allowed_document_ids)
         elif strat in ["semantic", "lsa_semantic", "lsa"]:
-            return self.search_semantic(query, k, owner_id=owner_id, document_id=document_id, scope=scope)
-        return self.search_hybrid(query, k, owner_id=owner_id, document_id=document_id, scope=scope)
+            return self.search_semantic(query, k, owner_id=owner_id, document_id=document_id, scope=scope, allowed_document_ids=allowed_document_ids)
+        return self.search_hybrid(query, k, owner_id=owner_id, document_id=document_id, scope=scope, allowed_document_ids=allowed_document_ids)
 
 
 class IndexManager(VectorStore):

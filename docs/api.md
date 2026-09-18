@@ -744,7 +744,7 @@ An initial SSE comment is transmitted immediately upon connection:
   ```json
   { "type": "retrieval_completed", "candidatesCount": 8, "latencyMs": 85 }
   ```
-- `reranking_started` / `reranking_completed` / `reranking_skipped`: Cross-encoder / Flash-reranker execution status.
+- `reranking_started` / `reranking_completed` / `reranking_skipped`: HEURISTIC RESCORER execution status.
 - `mmr_applied`: Emitted when Maximal Marginal Relevance diversification is applied.
   ```json
   { "type": "mmr_applied", "count": 5 }

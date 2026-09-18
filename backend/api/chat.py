@@ -145,7 +145,9 @@ async def chat_endpoint(
         mode=mode,
         request=request,
         document_id=req.document_id,
-        sync_mode=bool(getattr(req, "sync", False))
+        sync_mode=bool(getattr(req, "sync", False)),
+        conversation_id=conv_id,
+        source_document_ids=req.get_source_document_ids()
     )
 
     wrapped_gen = stream_with_persistence(

@@ -441,6 +441,7 @@ def test_ephemeral_disk_restart_recovery():
     )
 
     # Pre-restart retrieval test
+    vector_store.reload()
     pre_results = vector_store.search("TruncatedSVD LSA projection", k=3, owner_id=uid)
     assert len(pre_results) > 0
 

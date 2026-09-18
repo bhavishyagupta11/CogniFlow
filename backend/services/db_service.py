@@ -148,6 +148,23 @@ class BaseDatabaseService(ABC):
     def delete_messages_by_conversation(self, conv_id: str) -> bool:
         pass
 
+    # Conversation Sources
+    @abstractmethod
+    def get_conversation_sources(self, conv_id: str) -> List[str]:
+        pass
+
+    @abstractmethod
+    def attach_conversation_source(self, conv_id: str, doc_id: str) -> None:
+        pass
+
+    @abstractmethod
+    def detach_conversation_source(self, conv_id: str, doc_id: str) -> None:
+        pass
+
+    @abstractmethod
+    def list_conversation_source_documents(self, conv_id: str) -> List[Dict[str, Any]]:
+        pass
+
     # Documents
     @abstractmethod
     def create_document(self, doc_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -340,6 +357,14 @@ class SqliteDatabaseService(BaseDatabaseService):
                         summary_json TEXT NOT NULL,
                         created_at TEXT NOT NULL
                     );
+                    CREATE TABLE IF NOT EXISTS conversation_documents (
+                        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                        document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                        created_at TEXT NOT NULL,
+                        PRIMARY KEY (conversation_id, document_id)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_conv_docs_conv ON conversation_documents(conversation_id);
+                    CREATE INDEX IF NOT EXISTS idx_conv_docs_doc ON conversation_documents(document_id);
                 """)
 
     # Users
@@ -390,6 +415,8 @@ class SqliteDatabaseService(BaseDatabaseService):
                 return None
             conv = dict(row)
         conv["messages"] = self.list_messages(conv_id, user_id)
+        conv["sources"] = self.get_conversation_sources(conv_id)
+        conv["source_documents"] = self.list_conversation_source_documents(conv_id)
         return conv
 
     def list_conversations(self, user_id: str) -> List[Dict[str, Any]]:
@@ -407,6 +434,34 @@ class SqliteDatabaseService(BaseDatabaseService):
         with self.get_connection() as conn:
             cursor = conn.execute("DELETE FROM conversations WHERE id = ? AND user_id = ?", (conv_id, user_id))
             return cursor.rowcount > 0
+
+    # Conversation Sources
+    def get_conversation_sources(self, conv_id: str) -> List[str]:
+        with self.get_connection() as conn:
+            rows = conn.execute("SELECT document_id FROM conversation_documents WHERE conversation_id = ? ORDER BY created_at ASC", (conv_id,)).fetchall()
+            return [r["document_id"] for r in rows]
+
+    def attach_conversation_source(self, conv_id: str, doc_id: str) -> None:
+        now = utc_now_iso()
+        with self.get_connection() as conn:
+            conn.execute("INSERT OR IGNORE INTO conversation_documents (conversation_id, document_id, created_at) VALUES (?, ?, ?)", (conv_id, doc_id, now))
+
+    def detach_conversation_source(self, conv_id: str, doc_id: str) -> None:
+        with self.get_connection() as conn:
+            conn.execute("DELETE FROM conversation_documents WHERE conversation_id = ? AND document_id = ?", (conv_id, doc_id))
+
+    def list_conversation_source_documents(self, conv_id: str) -> List[Dict[str, Any]]:
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT d.* FROM documents d
+                JOIN conversation_documents cd ON d.id = cd.document_id
+                WHERE cd.conversation_id = ? AND d.lifecycle_state = 'ACTIVE'
+                ORDER BY cd.created_at ASC
+                """,
+                (conv_id,)
+            ).fetchall()
+            return [format_doc_dict(dict(r)) for r in rows]
 
     # Messages
     def save_message(self, conv_id: str, user_id: str, role: str, content: str, metadata: Optional[Dict[str, Any]] = None, msg_id: Optional[str] = None) -> Dict[str, Any]:
@@ -855,6 +910,8 @@ class PostgresDatabaseService(BaseDatabaseService):
                 cols = [desc[0] for desc in cur.description]
                 conv = dict(zip(cols, row))
         conv["messages"] = self.list_messages(conv_id, user_id)
+        conv["sources"] = self.get_conversation_sources(conv_id)
+        conv["source_documents"] = self.list_conversation_source_documents(conv_id)
         return conv
 
     def list_conversations(self, user_id: str) -> List[Dict[str, Any]]:
@@ -877,6 +934,44 @@ class PostgresDatabaseService(BaseDatabaseService):
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM conversations WHERE id = %s AND user_id = %s", (conv_id, user_id))
                 return cur.rowcount > 0
+
+    # Conversation Sources
+    def get_conversation_sources(self, conv_id: str) -> List[str]:
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT document_id FROM conversation_documents WHERE conversation_id = %s ORDER BY created_at ASC", (conv_id,))
+                rows = cur.fetchall()
+                return [r[0] for r in rows]
+
+    def attach_conversation_source(self, conv_id: str, doc_id: str) -> None:
+        now = utc_now_iso()
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO conversation_documents (conversation_id, document_id, created_at) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                    (conv_id, doc_id, now)
+                )
+
+    def detach_conversation_source(self, conv_id: str, doc_id: str) -> None:
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM conversation_documents WHERE conversation_id = %s AND document_id = %s", (conv_id, doc_id))
+
+    def list_conversation_source_documents(self, conv_id: str) -> List[Dict[str, Any]]:
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT d.* FROM documents d
+                    JOIN conversation_documents cd ON d.id = cd.document_id
+                    WHERE cd.conversation_id = %s AND d.lifecycle_state = 'ACTIVE'
+                    ORDER BY cd.created_at ASC
+                    """,
+                    (conv_id,)
+                )
+                rows = cur.fetchall()
+                cols = [desc[0] for desc in cur.description]
+                return [format_doc_dict(dict(zip(cols, r))) for r in rows]
 
     # Messages
     def save_message(self, conv_id: str, user_id: str, role: str, content: str, metadata: Optional[Dict[str, Any]] = None, msg_id: Optional[str] = None) -> Dict[str, Any]:
@@ -1270,6 +1365,18 @@ def update_conversation_title(conv_id: str, title: str, user_id: str) -> bool:
 
 def delete_conversation(conv_id: str, user_id: str) -> bool:
     return db_service.delete_conversation(conv_id, user_id)
+
+def get_conversation_sources(conv_id: str) -> List[str]:
+    return db_service.get_conversation_sources(conv_id)
+
+def attach_conversation_source(conv_id: str, doc_id: str) -> None:
+    return db_service.attach_conversation_source(conv_id, doc_id)
+
+def detach_conversation_source(conv_id: str, doc_id: str) -> None:
+    return db_service.detach_conversation_source(conv_id, doc_id)
+
+def list_conversation_source_documents(conv_id: str) -> List[Dict[str, Any]]:
+    return db_service.list_conversation_source_documents(conv_id)
 
 def save_message(conv_id: str, user_id: str, role: str, content: str, metadata: Optional[Dict[str, Any]] = None, msg_id: Optional[str] = None) -> Dict[str, Any]:
     return db_service.save_message(conv_id, user_id, role, content, metadata, msg_id)

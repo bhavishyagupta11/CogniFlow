@@ -112,3 +112,13 @@ CREATE TABLE IF NOT EXISTS document_summaries (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_summaries_doc ON document_summaries(document_id);
+
+-- 8. Conversation Documents (Explicit chat-scoped sources mapping)
+CREATE TABLE IF NOT EXISTS conversation_documents (
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (conversation_id, document_id)
+);
+CREATE INDEX IF NOT EXISTS idx_conv_docs_conv ON conversation_documents(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_conv_docs_doc ON conversation_documents(document_id);

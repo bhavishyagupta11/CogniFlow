@@ -215,22 +215,26 @@ def test_guest_deleting_user_a_document_denied():
 # ==============================================================================
 def test_public_document_cannot_be_deleted_by_normal_user_or_guest():
     doc_id = upload_test_doc("system_public", "public_handbook.txt")
-    token_a = get_token_for("user_alice_test", "alice@cogniflow.test")
+    admin_token = get_token_for("user_admin_test", "admin@cogniflow.test", role="admin")
+    try:
+        token_a = get_token_for("user_alice_test", "alice@cogniflow.test")
 
-    # User A tries to delete public doc -> DENY
-    resp_user = client.delete(
-        f"/api/documents/{doc_id}",
-        headers={"Authorization": f"Bearer {token_a}"}
-    )
-    assert resp_user.status_code == 403, f"Expected 403 for user deleting public doc, got {resp_user.status_code}"
+        # User A tries to delete public doc -> DENY
+        resp_user = client.delete(
+            f"/api/documents/{doc_id}",
+            headers={"Authorization": f"Bearer {token_a}"}
+        )
+        assert resp_user.status_code == 403, f"Expected 403 for user deleting public doc, got {resp_user.status_code}"
 
-    # Guest tries to delete public doc -> DENY
-    resp_guest = client.delete(f"/api/documents/{doc_id}")
-    assert resp_guest.status_code == 403, f"Expected 403 for guest deleting public doc, got {resp_guest.status_code}"
+        # Guest tries to delete public doc -> DENY
+        resp_guest = client.delete(f"/api/documents/{doc_id}")
+        assert resp_guest.status_code == 403, f"Expected 403 for guest deleting public doc, got {resp_guest.status_code}"
 
-    # Public doc still exists
-    manifest = get_manifest()
-    assert any(m.get("id") == doc_id for m in manifest)
+        # Public doc still exists
+        manifest = get_manifest()
+        assert any(m.get("id") == doc_id for m in manifest)
+    finally:
+        client.delete(f"/api/documents/{doc_id}", headers={"Authorization": f"Bearer {admin_token}"})
 
 
 # ==============================================================================

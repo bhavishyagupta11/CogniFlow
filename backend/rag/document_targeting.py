@@ -98,7 +98,8 @@ def resolve_document_target(
     query: str,
     owner_id: str = "dev-user",
     manifest_override: Optional[List[Dict[str, Any]]] = None,
-    explicit_document_id: Optional[str] = None
+    explicit_document_id: Optional[str] = None,
+    allowed_document_ids: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """
     Resolves query against the user's available documents.
@@ -108,35 +109,43 @@ def resolve_document_target(
     
     # 0. If an explicit document ID was passed from request context
     if explicit_document_id:
-        target_doc = next((m for m in manifest if m.get("id") == explicit_document_id or m.get("document_id") == explicit_document_id), None)
-        if target_doc:
-            chunks_count = target_doc.get("chunkCount") or target_doc.get("chunk_count", 0)
-            doc_id = target_doc.get("id") or target_doc.get("document_id")
-            resolved_fname = target_doc.get("originalFilename") or target_doc.get("original_filename", target_doc.get("filename", ""))
-            return {
-                "is_document_specific": True,
-                "resolved": True,
-                "detected_document_target": resolved_fname,
-                "resolved_document_id": doc_id,
-                "resolved_filename": resolved_fname,
-                "candidate_document_matches": [{"id": doc_id, "filename": resolved_fname}],
-                "total_chunks_in_target_document": chunks_count,
-                "owner_id": owner_id,
-                "index_version": "2.2.0",
-                "ambiguous": False,
-                "scope": RetrievalScope.EXPLICIT_DOCUMENT.value,
-                "search_scope": "DOCUMENT ONLY"
-            }
+        if allowed_document_ids is None or explicit_document_id in allowed_document_ids:
+            target_doc = next((m for m in manifest if m.get("id") == explicit_document_id or m.get("document_id") == explicit_document_id), None)
+            if target_doc:
+                chunks_count = target_doc.get("chunkCount") or target_doc.get("chunk_count", 0)
+                doc_id = target_doc.get("id") or target_doc.get("document_id")
+                resolved_fname = target_doc.get("originalFilename") or target_doc.get("original_filename", target_doc.get("filename", ""))
+                return {
+                    "is_document_specific": True,
+                    "resolved": True,
+                    "detected_document_target": resolved_fname,
+                    "resolved_document_id": doc_id,
+                    "resolved_filename": resolved_fname,
+                    "candidate_document_matches": [{"id": doc_id, "filename": resolved_fname}],
+                    "total_chunks_in_target_document": chunks_count,
+                    "owner_id": owner_id,
+                    "index_version": "2.2.0",
+                    "ambiguous": False,
+                    "scope": RetrievalScope.EXPLICIT_DOCUMENT.value,
+                    "search_scope": "DOCUMENT ONLY"
+                }
 
     # Filter manifest to user-accessible documents
     user_docs = []
-    valid_owners = [owner_id, "system_public", "public"]
-    if owner_id in ["dev-user", "user_default", "user_3571d736"]:
-        valid_owners.extend(["dev-user", "user_default", "user_3571d736"])
-    for m in manifest:
-        owner = m.get("ownerId") or m.get("owner_id")
-        if not owner or owner in valid_owners:
-            user_docs.append(m)
+    if allowed_document_ids is not None and len(allowed_document_ids) == 0:
+        # No sources attached to chat
+        pass
+    else:
+        valid_owners = [owner_id]
+        if owner_id in ["dev-user", "user_default", "user_3571d736"]:
+            valid_owners.extend(["dev-user", "user_default", "user_3571d736"])
+        for m in manifest:
+            doc_id = m.get("id") or m.get("document_id")
+            if allowed_document_ids is not None and doc_id not in allowed_document_ids:
+                continue
+            owner = m.get("ownerId") or m.get("owner_id")
+            if not owner or owner in valid_owners:
+                user_docs.append(m)
 
     normalized_query = normalize_string(query)
     query_tokens = set(normalized_query.split())
