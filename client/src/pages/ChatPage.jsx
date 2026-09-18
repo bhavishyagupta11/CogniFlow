@@ -271,8 +271,18 @@ export function ChatPage() {
 
             const msg = { ...newMessages[targetIdx] };
 
+            const eventExecId = data.executionId || data.execution_id || data.requestId || data.request_id;
+            if (eventExecId) {
+              if (!msg.executionId) {
+                msg.executionId = eventExecId;
+              } else if (msg.executionId !== eventExecId) {
+                return newMessages;
+              }
+            }
+
             if (data.type === "request_started") {
               msg.requestId = data.request_id || data.requestId;
+              msg.executionId = eventExecId;
               msg.provider = data.provider;
               msg.model = data.model;
               msg.mode = data.mode;
@@ -935,6 +945,7 @@ export function ChatPage() {
                 <MessageBubble
                   key={msg.id}
                   message={msg}
+                  liveElapsedMs={msg.isStreaming ? liveElapsedMs : undefined}
                   onOpenPdf={setPdfSource}
                   onRetry={(q) => handleSubmit(q)}
                 />
@@ -1291,6 +1302,23 @@ function formatCitationsForMarkdown(rawContent) {
 
 const MessageBubble = memo(function MessageBubble({ message, liveElapsedMs, onOpenPdf, onRetry }) {
   const isUser = message.role === "user";
+  const [localElapsed, setLocalElapsed] = useState(0);
+
+  useEffect(() => {
+    let timer;
+    if (!isUser && message.isStreaming) {
+      const startTime = message.timestamp || message.createdAt || Date.now();
+      timer = setInterval(() => {
+        setLocalElapsed(Math.max(0, Date.now() - startTime));
+      }, 50);
+    } else {
+      setLocalElapsed(0);
+    }
+    return () => clearInterval(timer);
+  }, [isUser, message.isStreaming, message.timestamp, message.createdAt]);
+
+  const activeElapsed = (typeof liveElapsedMs === "number" && liveElapsedMs > 0) ? liveElapsedMs : localElapsed;
+
   const formattedContent = useMemo(() => {
     return formatCitationsForMarkdown(message.content);
   }, [message.content]);
@@ -1338,7 +1366,7 @@ const MessageBubble = memo(function MessageBubble({ message, liveElapsedMs, onOp
             {!isUser && (
               <span data-testid="live-meta-bubble" className="text-[9px] text-[var(--text-muted)] shrink-0 whitespace-nowrap font-mono">
                 [{message.isStreaming
-                  ? `${((liveElapsedMs || 0) / 1000).toFixed(2)}s live`
+                  ? `${(activeElapsed / 1000).toFixed(2)}s live`
                   : `${((message.totalDurationMs || 0) / 1000).toFixed(2)}s`
                 } · {message.steps?.length ?? 0} STAGES
                 {message.ttftMs ? ` · TTFT: ${(message.ttftMs / 1000).toFixed(2)}s` : ""}

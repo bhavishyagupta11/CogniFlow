@@ -42,46 +42,79 @@ def detect_answerability(
         )
 
     q_tokens = [w.lower() for w in re.findall(r"\b[a-zA-Z0-9_-]{3,}\b", question)]
-    # Filter common stop words and conversational query meta-terms
+    # Filter common stop words, determiners, prepositions, and conversational meta-terms
     stop_words = {
-        "what", "when", "where", "which", "how", "does", "explain", "compare", "the", "and", "for", "with",
-        "uploaded", "document", "documents", "file", "files", "pdf", "tell", "show", "please", "list"
+        "what", "when", "where", "which", "how", "why", "who", "does", "did", "do",
+        "explain", "compare", "the", "and", "for", "with", "from", "into", "onto",
+        "uploaded", "document", "documents", "file", "files", "pdf", "tell", "show",
+        "please", "list", "about", "describe", "give", "definition", "define",
+        "overview", "detail", "details", "their", "complete", "summary", "summay",
+        "entire", "whole", "full", "this", "that", "these", "those", "there", "any",
+        "some", "other", "another", "information", "info", "notes", "paper", "book",
+        "text", "content", "read", "write", "provide", "data", "structures"
     }
-    key_tokens = [t for t in q_tokens if t not in stop_words]
+    key_tokens = [t for t in q_tokens if t not in stop_words and len(t) >= 4]
 
     if not key_tokens:
-        key_tokens = q_tokens
+        key_tokens = [t for t in q_tokens if len(t) >= 4]
 
     corpus_text = " ".join([s.get("chunkContent", s.get("content", "")) + " " + s.get("documentTitle", "") for s in sources]).lower()
 
-    # 1. Contradiction Detection across chunks
-    if len(sources) >= 2:
+    # 1. Conservative Contradiction Detection across chunks
+    if len(sources) >= 2 and key_tokens:
         for i in range(len(sources)):
             for j in range(i + 1, len(sources)):
                 c1_text = sources[i].get("chunkContent", sources[i].get("content", "")).lower()
                 c2_text = sources[j].get("chunkContent", sources[j].get("content", "")).lower()
 
-                for pos_pattern, neg_pattern in OPPOSING_PAIRS:
-                    has_pos_1 = bool(re.search(pos_pattern, c1_text))
-                    has_neg_2 = bool(re.search(neg_pattern, c2_text))
-                    has_pos_2 = bool(re.search(pos_pattern, c2_text))
-                    has_neg_1 = bool(re.search(neg_pattern, c1_text))
+                doc1_id = sources[i].get("documentId") or sources[i].get("document_id") or "doc1"
+                doc2_id = sources[j].get("documentId") or sources[j].get("document_id") or "doc2"
+                doc1_title = sources[i].get("documentTitle") or sources[i].get("filename") or "Document 1"
+                doc2_title = sources[j].get("documentTitle") or sources[j].get("filename") or "Document 2"
 
-                    if (has_pos_1 and has_neg_2) or (has_pos_2 and has_neg_1):
-                        shared_subjects = [t for t in key_tokens if t in c1_text and t in c2_text]
+                for pos_pattern, neg_pattern in OPPOSING_PAIRS:
+                    m_pos_1 = re.search(pos_pattern, c1_text)
+                    m_neg_2 = re.search(neg_pattern, c2_text)
+                    m_pos_2 = re.search(pos_pattern, c2_text)
+                    m_neg_1 = re.search(neg_pattern, c1_text)
+
+                    match_pair = None
+                    if m_pos_1 and m_neg_2:
+                        match_pair = (m_pos_1.start(), m_neg_2.start(), c1_text, c2_text)
+                    elif m_pos_2 and m_neg_1:
+                        match_pair = (m_pos_2.start(), m_neg_1.start(), c2_text, c1_text)
+
+                    if match_pair:
+                        p_pos, p_neg, text_pos, text_neg = match_pair
+                        # Verify that the opposing assertion shares a substantive topic within proximity (<80 chars)
+                        shared_subjects = []
+                        for t in key_tokens:
+                            # Substantive subject must appear close to the assertion verbs in both chunks
+                            pos_sub = t in text_pos[max(0, p_pos - 80) : min(len(text_pos), p_pos + 80)]
+                            neg_sub = t in text_neg[max(0, p_neg - 80) : min(len(text_neg), p_neg + 80)]
+                            if pos_sub and neg_sub:
+                                shared_subjects.append(t)
+
                         if shared_subjects:
                             id_i = sources[i].get("chunkId", sources[i].get("id", f"chunk-{i}"))
                             id_j = sources[j].get("chunkId", sources[j].get("id", f"chunk-{j}"))
+
+                            # Distinguish across sources vs. within same document
+                            if doc1_id != doc2_id:
+                                prefix = f"Conflicting evidence detected across sources ({doc1_title} vs {doc2_title})"
+                            else:
+                                prefix = f"Conflicting passages within {doc1_title}"
+
                             return AnswerabilityResult(
                                 status="contradictory",
                                 answerable=True,
-                                confidence=0.75,
+                                confidence=0.85,
                                 supportingChunkIds=[id_i, id_j],
                                 missingInformation=[],
                                 conflictingChunkIds=[id_i, id_j],
                                 coveredConcepts=shared_subjects,
                                 missingConcepts=[],
-                                reason=f"Heuristic contradiction detected regarding '{shared_subjects[0]}' between retrieved passages."
+                                reason=f"{prefix}: Opposing assertions detected regarding '{shared_subjects[0]}' between retrieved passages."
                             )
 
     # 2. Multi-Concept Coverage & Requirement Gating

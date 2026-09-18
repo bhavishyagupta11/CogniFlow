@@ -14,6 +14,7 @@ Implements the Master Renovation Specification:
 
 import time
 import json
+import uuid
 import asyncio
 from typing import AsyncGenerator, Dict, Any, List, Optional
 from fastapi import Request
@@ -23,7 +24,7 @@ from backend.rag.classifier import classify_query, extract_subqueries
 from backend.rag.adaptive_controller import adaptive_controller
 from backend.rag.citations import citation_assembler
 from backend.rag.retriever import parallel_retrieve, compute_retrieval_confidence
-from backend.rag.reranker import should_skip_reranker, rerank_candidates
+from backend.rag.reranker import should_skip_reranker, rerank_candidates, evaluate_heuristic_rescorer_impact
 from backend.rag.mmr import apply_mmr_diversity
 from backend.rag.vector_store import vector_store
 from backend.rag.answerability import detect_answerability, check_document_summary_answerability
@@ -44,6 +45,82 @@ from backend.config import (
     MAX_VERIFY_ITERATIONS
 )
 from backend.rag.identity import build_system_prompt
+
+
+def expand_selected_sources_with_neighbors(
+    selected: List[Dict[str, Any]],
+    all_chunks: List[Dict[str, Any]],
+    max_additional_chars_per_chunk: int = 600
+) -> List[Dict[str, Any]]:
+    """
+    Expands selected chunks with bounded contiguous context from adjacent chunks
+    strictly respecting:
+    1. Same document ID
+    2. Section continuity
+    3. Page proximity (|delta_page| <= 1)
+    4. Token/character budget
+    """
+    expanded = []
+    for s in selected:
+        doc_id = s.get("documentId") or s.get("document_id")
+        chunk_idx = s.get("chunkIndex") if s.get("chunkIndex") is not None else s.get("chunk_index")
+        if not doc_id or chunk_idx is None:
+            expanded.append(s)
+            continue
+
+        current_sec = (s.get("section") or "").strip().lower()
+        current_page = s.get("pageNumber") or s.get("page_start") or 1
+        current_content = s.get("chunkContent") or s.get("content") or s.get("text", "")
+
+        prev_chunk = None
+        next_chunk = None
+        for c in all_chunks:
+            if (c.get("documentId") or c.get("document_id")) != doc_id:
+                continue
+            c_idx = c.get("chunkIndex") if c.get("chunkIndex") is not None else c.get("chunk_index")
+            if c_idx == chunk_idx - 1:
+                prev_chunk = c
+            elif c_idx == chunk_idx + 1:
+                next_chunk = c
+
+        exp_content = current_content
+        budget = max_additional_chars_per_chunk
+        p_start = s.get("page_start", current_page)
+        p_end = s.get("page_end", current_page)
+
+        if prev_chunk and budget > 200:
+            prev_sec = (prev_chunk.get("section") or "").strip().lower()
+            prev_page = prev_chunk.get("pageNumber") or prev_chunk.get("page_start") or current_page
+            if (not current_sec or not prev_sec or prev_sec == current_sec) and abs(current_page - prev_page) <= 1:
+                prev_text = (prev_chunk.get("chunkContent") or prev_chunk.get("content") or "").strip()
+                paras = [p for p in prev_text.split("\n\n") if p.strip()]
+                piece = paras[-1] if paras else prev_text[-250:]
+                if len(piece) <= budget:
+                    exp_content = f"{piece}\n\n{exp_content}"
+                    budget -= len(piece)
+                    p_start = min(p_start, prev_page)
+
+        if next_chunk and budget > 200:
+            next_sec = (next_chunk.get("section") or "").strip().lower()
+            next_page = next_chunk.get("pageNumber") or next_chunk.get("page_start") or current_page
+            if (not current_sec or not next_sec or next_sec == current_sec) and abs(current_page - next_page) <= 1:
+                next_text = (next_chunk.get("chunkContent") or next_chunk.get("content") or "").strip()
+                paras = [p for p in next_text.split("\n\n") if p.strip()]
+                piece = paras[0] if paras else next_text[:250]
+                if len(piece) <= budget:
+                    exp_content = f"{exp_content}\n\n{piece}"
+                    p_end = max(p_end, next_page)
+
+        s_copy = dict(s)
+        s_copy["chunkContent"] = exp_content
+        s_copy["content"] = exp_content
+        s_copy["text"] = exp_content
+        s_copy["page_start"] = p_start
+        s_copy["page_end"] = p_end
+        s_copy["pageNumber"] = p_start
+        expanded.append(s_copy)
+
+    return expanded
 
 
 def sse_event(data: Dict[str, Any]) -> str:
@@ -88,23 +165,29 @@ async def run_rag_pipeline(
     elif document_id:
         allowed_document_ids = [document_id]
 
-    request_id = f"req-{int(time.time() * 1000)}"
+    execution_id = f"exec-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
+    request_id = execution_id
     tracker.request_id = request_id
     tracker.user_id = user_id
     tracker.mode = user_mode
     tracker.complexity = user_mode
 
+    def sse_event(data: Dict[str, Any]) -> str:
+        payload = dict(data)
+        payload["execution_id"] = execution_id
+        payload["executionId"] = execution_id
+        payload["requestId"] = execution_id
+        payload["request_id"] = execution_id
+        return f"data: {json.dumps(payload)}\n\n"
+
     # Immediate SSE connection confirmation chunk (<200ms)
     yield ": connected\n\n"
     yield sse_event({
         "type": "connected",
-        "requestId": request_id,
         "timestamp": int(time.time() * 1000)
     })
     yield sse_event({
         "type": "request_started",
-        "requestId": request_id,
-        "request_id": request_id,
         "stage": "pipeline",
         "status": "STARTED",
         "mode": user_mode,
@@ -293,7 +376,6 @@ async def run_rag_pipeline(
     # If no target_doc_id was explicitly extracted from question text, but exactly 1 source is attached, target that source
     if not target_doc_id and allowed_document_ids and len(allowed_document_ids) == 1:
         target_doc_id = allowed_document_ids[0]
-        from backend.services.document_service import get_manifest
         for m in get_manifest():
             if (m.get("id") or m.get("document_id")) == target_doc_id:
                 target_filename = m.get("originalFilename") or m.get("filename")
@@ -453,34 +535,10 @@ async def run_rag_pipeline(
             yield sse_event({"type": "pipeline_complete", "result": pipe_result})
             return
 
-        # CACHE MISS: Obey Pre-Execution Correction 4
-        if not sync_mode:
-            # Mandate 4: Schedule background precomputation; DO NOT block user on a 120s synchronous loop!
-            schedule_document_summary_precomputation(target_doc_id, target_entry or {})
-            prep_msg = (
-                f"### Document Summary Preparation in Progress\n\n"
-                f"A complete chapter-by-chapter summary for **{target_filename}** ({page_count} pages) "
-                f"has been queued for background preprocessing.\n\n"
-                f"You can continue asking normal grounded RAG questions about this document in **Fast** or "
-                f"**Adaptive RAG** mode while the summary is compiling into cache."
-            )
-            yield sse_event({"type": "route_selected", "mode": user_mode, "complexity": "document_summary", "reason": "Summary cache miss: enqueued background precomputation to protect user latency."})
-            yield sse_event({"type": "text_delta", "delta": prep_msg, "content": prep_msg})
-            result = {
-                "question": question,
-                "answer": prep_msg,
-                "sources": [],
-                "steps": steps,
-                "totalDurationMs": tracker.total_duration_ms(),
-                "plan": {"queryType": "document_summary_queued"},
-                "confidence": {"score": 0.85, "sufficient": True, "reason": "Background summary compilation queued."},
-                "answerability": answerability_dict,
-                "telemetry": tracker.to_dict()
-            }
-            yield sse_event({"type": "pipeline_complete", "result": result})
-            return
+        # CACHE MISS: Run hierarchical summarization directly, store in cache, and stream
+        yield sse_event({"type": "route_selected", "mode": user_mode, "complexity": "document_summary", "reason": "Document summary: generating hierarchical document summary."})
+        yield sse_event({"type": "summary_started", "documentId": target_doc_id, "documentTitle": target_filename, "pageCount": page_count, "cached": False})
 
-        # If sync_mode is explicitly True (e.g. running e2e test suite), run synchronous hierarchical map-reduce
         progress_queue = asyncio.Queue()
         async def progress_cb(evt: Dict[str, Any]):
             await progress_queue.put(evt)
@@ -506,10 +564,26 @@ async def run_rag_pipeline(
         summary_result = await summarize_task
         final_answer = summary_result.get("answer", "")
         summary_sources = summary_result.get("sources", [])
-        yield sse_event({"type": "final_answer_started"})
+
+        # Store in cache
+        try:
+            summary_cache.set_summary(
+                doc_id=target_doc_id,
+                doc_hash=doc_hash,
+                page_range=page_range_key,
+                config_hash=config_hash,
+                summary_data=summary_result
+            )
+        except Exception:
+            pass
+
+        yield sse_event({"type": "final_answer_started", "cached": False})
         yield sse_event({"type": "sources", "sources": summary_sources})
 
         for i in range(0, len(final_answer), 800):
+            if request and await request.is_disconnected():
+                yield sse_event({"type": "cancelled", "reason": "Client disconnected during streaming"})
+                return
             yield sse_event({"type": "text_delta", "delta": final_answer[i:i+800], "content": final_answer[i:i+800]})
 
         pipe_result = {
@@ -728,27 +802,33 @@ async def run_rag_pipeline(
     yield sse_event(route_event)
 
     # ─────────────────────────────────────────────────────────────────
-    # STAGE 4: CONDITIONAL RERANKER (Specification Section 16)
+    # STAGE 3: HEURISTIC RESCORER (Deterministic Lexical-Diversity Rescorer)
     # ─────────────────────────────────────────────────────────────────
     rr_start = time.time()
     step3_start = int(time.time() * 1000)
 
+    top_score = float(formatted_sources[0]["score"]) if formatted_sources else 0.0
+    second_score = float(formatted_sources[1]["score"]) if len(formatted_sources) > 1 else top_score
+    score_gap = top_score - second_score
+    skip_rerank, skip_reason = should_skip_reranker(
+        mode=user_mode,
+        complexity=execution_complexity,
+        candidates=formatted_sources,
+        top_score=top_score,
+        score_gap=score_gap
+    )
+
     yield sse_event({
         "type": "stage_queued",
-        "requestId": request_id,
-        "request_id": request_id,
         "stage": "reranker",
         "status": "QUEUED",
         "mode": user_mode,
         "timestamp": step3_start
     })
 
-    if not needs_rerank:
-        skip_reason = "Decisive top candidate relevance; heuristic rescorer skipped to conserve latency."
+    if skip_rerank:
         yield sse_event({
             "type": "stage_skipped",
-            "requestId": request_id,
-            "request_id": request_id,
             "stage": "reranker",
             "status": "SKIPPED",
             "mode": user_mode,
@@ -757,26 +837,29 @@ async def run_rag_pipeline(
         })
         yield sse_event({
             "type": "reranking_skipped",
-            "requestId": request_id,
             "reason": skip_reason
         })
         tracker.reranking_ms = 1
+        rescorer_telemetry = evaluate_heuristic_rescorer_impact(
+            before_candidates=formatted_sources,
+            after_candidates=formatted_sources,
+            duration_ms=1,
+            invoked=False
+        )
         reranker_step = {
             "id": f"step-reranker-{step3_start}",
             "agent": "reranker",
-            "label": "HEURISTIC RESCORER — SKIPPED (high-confidence retrieval)",
+            "label": "HEURISTIC RESCORER — SKIPPED",
             "status": "skipped",
             "startedAt": step3_start,
             "finishedAt": int(time.time() * 1000),
             "durationMs": 1,
             "input": {"skipReason": skip_reason},
-            "output": {"reranked": False}
+            "output": {"reranked": False, "telemetry": rescorer_telemetry}
         }
     else:
         yield sse_event({
             "type": "stage_started",
-            "requestId": request_id,
-            "request_id": request_id,
             "stage": "reranker",
             "label": "HEURISTIC RESCORER",
             "status": "RUNNING",
@@ -792,27 +875,33 @@ async def run_rag_pipeline(
         })
         yield sse_event({
             "type": "reranking_started",
-            "requestId": request_id,
             "count": len(formatted_sources)
         })
+        before_rerank = list(formatted_sources)
         formatted_sources = rerank_candidates(question, formatted_sources, top_k=initial_top_k)
-        tracker.reranking_ms = max(int((time.time() - rr_start) * 1000), 2)
+        tracker.reranking_ms = max(int((time.time() - rr_start) * 1000), 1)
+        rescorer_telemetry = evaluate_heuristic_rescorer_impact(
+            before_candidates=before_rerank,
+            after_candidates=formatted_sources,
+            duration_ms=tracker.reranking_ms,
+            invoked=True
+        )
         yield sse_event({
             "type": "stage_completed",
-            "requestId": request_id,
-            "request_id": request_id,
             "stage": "reranker",
+            "label": "HEURISTIC RESCORER",
             "status": "COMPLETED",
             "mode": user_mode,
             "durationMs": tracker.reranking_ms,
             "topScore": formatted_sources[0]["score"] if formatted_sources else 0.0,
+            "telemetry": rescorer_telemetry,
             "timestamp": int(time.time() * 1000)
         })
         yield sse_event({
             "type": "reranking_completed",
-            "requestId": request_id,
             "durationMs": tracker.reranking_ms,
-            "topScore": formatted_sources[0]["score"] if formatted_sources else 0.0
+            "topScore": formatted_sources[0]["score"] if formatted_sources else 0.0,
+            "telemetry": rescorer_telemetry
         })
         reranker_step = {
             "id": f"step-reranker-{step3_start}",
@@ -823,7 +912,7 @@ async def run_rag_pipeline(
             "finishedAt": int(time.time() * 1000),
             "durationMs": tracker.reranking_ms,
             "input": {"candidateCount": len(formatted_sources)},
-            "output": {"topScore": formatted_sources[0]["score"]}
+            "output": {"topScore": formatted_sources[0]["score"], "telemetry": rescorer_telemetry}
         }
     steps.append(reranker_step)
     yield sse_event({"type": "agent_finish", "step": reranker_step})
@@ -860,48 +949,8 @@ async def run_rag_pipeline(
         return
 
     # ─────────────────────────────────────────────────────────────────
-    # STAGE 6: GROUNDED GENERATION (FAST / ADAPTIVE / DEEP RESEARCH)
+    # EVIDENCE SYNTHESIS & BOUNDED NEIGHBOR EXPANSION
     # ─────────────────────────────────────────────────────────────────
-    g_start = time.time()
-    step4_start = int(time.time() * 1000)
-
-    yield sse_event({
-        "type": "stage_queued",
-        "requestId": request_id,
-        "request_id": request_id,
-        "stage": "generator",
-        "status": "QUEUED",
-        "mode": user_mode,
-        "timestamp": step4_start
-    })
-    yield sse_event({
-        "type": "stage_started",
-        "requestId": request_id,
-        "request_id": request_id,
-        "stage": "generator",
-        "label": "Final Generator",
-        "status": "RUNNING",
-        "mode": user_mode,
-        "timestamp": step4_start,
-        "provider": PRIMARY_PROVIDER,
-        "model": PRIMARY_MODEL
-    })
-    yield sse_event({
-        "type": "agent_start",
-        "agent": "generator",
-        "label": "Generating grounded response...",
-        "startedAt": step4_start
-    })
-    yield sse_event({
-        "type": "generation_started",
-        "requestId": request_id,
-        "mode": user_mode,
-        "complexity": execution_complexity,
-        "provider": PRIMARY_PROVIDER,
-        "model": PRIMARY_MODEL
-    })
-
-    # Concept Coverage Analysis & Distractor Chunk Pruning
     from backend.rag.concept_coverage import analyze_concept_coverage
     concept_coverage = analyze_concept_coverage(question, formatted_sources)
 
@@ -916,6 +965,11 @@ async def run_rag_pipeline(
     # Format evidence blocks with explicit Section 16 provenance identifiers [E1], [E2]
     max_evidence_chunks = 4 if user_mode == "fast" else 6
     selected_sources = filtered_sources[:max_evidence_chunks]
+    selected_sources = expand_selected_sources_with_neighbors(
+        selected=selected_sources,
+        all_chunks=vector_store.chunks,
+        max_additional_chars_per_chunk=600
+    )
     tracker.selected_context_count = len(selected_sources)
 
     context_blocks = []
@@ -1326,13 +1380,47 @@ async def run_rag_pipeline(
     else:
         # ─────────────────────────────────────────────────────────────
         # HIGH-CONFIDENCE / SIMPLE PATH:
-        # retrieval → generation → citations → stream
+        # Stage 04: Verifier (Skipped by policy)
+        # Stage 05: Generator (Grounded generation → citations → stream)
         # ─────────────────────────────────────────────────────────────
+        step5_start = int(time.time() * 1000)
+        yield sse_event({
+            "type": "stage_queued",
+            "stage": "verifier",
+            "status": "QUEUED",
+            "mode": user_mode,
+            "timestamp": step5_start
+        })
+        yield sse_event({
+            "type": "stage_skipped",
+            "stage": "verifier",
+            "status": "SKIPPED",
+            "mode": user_mode,
+            "reason": "Verification skipped: high-confidence grounded evidence (fast/simple path).",
+            "timestamp": step5_start
+        })
+        yield sse_event({
+            "type": "verification_skipped",
+            "reason": "Verification skipped: high-confidence grounded evidence (fast/simple path)."
+        })
+        verifier_step = {
+            "id": f"step-verifier-{step5_start}",
+            "agent": "verifier",
+            "label": "Verification skipped (high-confidence grounded evidence)",
+            "status": "skipped",
+            "startedAt": step5_start,
+            "finishedAt": step5_start,
+            "durationMs": 1,
+            "input": {"skipReason": "high-confidence grounded evidence"},
+            "output": {"verdict": "skipped"}
+        }
+        steps.append(verifier_step)
+        yield sse_event({"type": "agent_finish", "step": verifier_step})
+
+        # Stage 05: Final Grounded Generator
         step4_start = int(time.time() * 1000)
         yield sse_event({
             "type": "stage_queued",
-            "requestId": request_id,
-            "request_id": request_id,
             "stage": "generator",
             "status": "QUEUED",
             "mode": user_mode,
@@ -1340,8 +1428,6 @@ async def run_rag_pipeline(
         })
         yield sse_event({
             "type": "stage_started",
-            "requestId": request_id,
-            "request_id": request_id,
             "stage": "generator",
             "label": "Final Generator",
             "status": "RUNNING",
@@ -1358,7 +1444,6 @@ async def run_rag_pipeline(
         })
         yield sse_event({
             "type": "generation_started",
-            "requestId": request_id,
             "mode": user_mode,
             "complexity": execution_complexity,
             "provider": PRIMARY_PROVIDER,
@@ -1394,8 +1479,6 @@ async def run_rag_pipeline(
         for cite in validated_citations:
             yield sse_event({
                 "type": "citation",
-                "requestId": request_id,
-                "request_id": request_id,
                 "stage": "generator",
                 "evidenceId": cite.get("citationId"),
                 "documentId": cite.get("documentId"),
@@ -1405,7 +1488,6 @@ async def run_rag_pipeline(
             })
             yield sse_event({
                 "type": "citation_event",
-                "requestId": request_id,
                 "evidenceId": cite.get("citationId"),
                 "documentId": cite.get("documentId"),
                 "pageStart": cite.get("pageStart"),
@@ -1421,8 +1503,6 @@ async def run_rag_pipeline(
             piece = sanitized_answer[i:i + chunk_sz]
             yield sse_event({
                 "type": "token",
-                "requestId": request_id,
-                "request_id": request_id,
                 "stage": "generator",
                 "delta": piece,
                 "content": piece,
@@ -1430,44 +1510,12 @@ async def run_rag_pipeline(
             })
             yield sse_event({
                 "type": "text_delta",
-                "requestId": request_id,
                 "delta": piece,
                 "content": piece
             })
             await asyncio.sleep(0.005)
 
         step4_finish = int(time.time() * 1000)
-
-        # Verification Skipped
-        step5_start = int(time.time() * 1000)
-        yield sse_event({
-            "type": "stage_skipped",
-            "requestId": request_id,
-            "request_id": request_id,
-            "stage": "verifier",
-            "status": "SKIPPED",
-            "mode": user_mode,
-            "reason": "Verification skipped: high-confidence grounded evidence (fast/simple path).",
-            "timestamp": step5_start
-        })
-        yield sse_event({
-            "type": "verification_skipped",
-            "requestId": request_id,
-            "reason": "Verification skipped: high-confidence grounded evidence (fast/simple path)."
-        })
-        verifier_step = {
-            "id": f"step-verifier-{step5_start}",
-            "agent": "verifier",
-            "label": "Verification skipped (high-confidence grounded evidence)",
-            "status": "skipped",
-            "startedAt": step5_start,
-            "finishedAt": step5_start,
-            "durationMs": 1,
-            "input": {"skipReason": "high-confidence grounded evidence"},
-            "output": {"verdict": "skipped"}
-        }
-        steps.append(verifier_step)
-        yield sse_event({"type": "agent_finish", "step": verifier_step})
 
         provider_telemetry = get_latest_provider_telemetry()
         actual_provider = provider_telemetry.get("actual_provider") or provider_telemetry.get("provider") or PRIMARY_PROVIDER

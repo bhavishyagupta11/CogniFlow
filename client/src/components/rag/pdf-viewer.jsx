@@ -6,6 +6,7 @@ import "react-pdf/dist/Page/TextLayer.css";
 import { Loader2, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuthStore } from "@/store/use-auth-store";
+import { resolveApiUrl } from "@/api/client";
 
 if (typeof window !== "undefined") {
   pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
@@ -48,7 +49,7 @@ export function PdfViewer({ documentId, initialPage = 1 }) {
           params.set("session_id", sessionId);
         }
         const queryString = params.toString();
-        const url = `/api/documents/${documentId}/raw${queryString ? `?${queryString}` : ""}`;
+        const url = resolveApiUrl(`/api/documents/${documentId}/raw${queryString ? `?${queryString}` : ""}`);
 
         const headers = {
           "Cache-Control": "no-cache",

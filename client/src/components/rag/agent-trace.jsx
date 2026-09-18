@@ -9,12 +9,13 @@ const STAGE_NUMBERS = {
   router: "01",
   retriever: "02",
   reranker: "03",
+  rescorer: "03",
   draft_generator: "04",
-  verifier: "05",
-  critic: "05",
+  verifier: "04",
+  critic: "04",
   analyzer: "04",
-  generator: "06",
-  citations: "07",
+  generator: "05",
+  citations: "05",
   coordinator: "00",
   loader: "02",
   mapper: "03",
@@ -25,6 +26,7 @@ const AGENT_LABELS = {
   router: "ROUTER",
   retriever: "RETRIEVER",
   reranker: "HEURISTIC RESCORER",
+  rescorer: "HEURISTIC RESCORER",
   draft_generator: "DRAFT GENERATOR",
   generator: "FINAL GENERATOR",
   verifier: "VERIFIER",
@@ -103,7 +105,7 @@ const StepCard = memo(function StepCard({ step, index, devMode }) {
     if (isRunning && step.startedAt) {
       interval = setInterval(() => {
         setLiveElapsed(Math.max(0, Date.now() - step.startedAt));
-      }, 100);
+      }, 50);
     } else {
       setLiveElapsed(0);
     }

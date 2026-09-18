@@ -23,29 +23,55 @@ from backend.config import (
 
 
 def should_skip_reranker(
+    mode: str,
     complexity: str,
     candidates: List[Dict[str, Any]],
     top_score: Optional[float] = None,
     score_gap: Optional[float] = None
 ) -> Tuple[bool, str]:
     """
-    Determines whether the Heuristic Rescorer should be skipped to conserve latency.
-    Employs empirically calibrated signals rather than hardcoded assumptions.
+    Authoritative Invocation Policy for HEURISTIC RESCORER:
+    - GENERAL_CHAT: never
+    - DOCUMENT_SUMMARY: never (summary uses full document / cache)
+    - FAST: conditional only when retrieval ambiguity requires it
+    - ADAPTIVE_RAG: run for >= 3 meaningful candidates
+    - DEEP_RESEARCH: run for >= 2 candidates
     """
+    norm_mode = (mode or "").lower().strip()
+    norm_comp = (complexity or "").lower().strip()
+
+    if norm_mode == "general_chat" or norm_comp == "general_chat":
+        return True, "Heuristic Rescorer skipped: General chat does not use document retrieval."
+
+    if norm_comp == "document_summary":
+        return True, "Heuristic Rescorer skipped: Document summary operates at document/section scope."
+
     if not RERANK_ENABLED:
         return True, "Heuristic Rescorer disabled in system configuration."
-    if len(candidates) <= 2:
-        return True, "Heuristic Rescorer skipped: Candidate pool is small (<= 2 chunks)."
-    if complexity in ["simple", "fast"]:
-        return True, f"Heuristic Rescorer skipped: {complexity.capitalize()} execution path prioritizes latency."
 
-    # If scores are provided, check against configurable thresholds
-    s_top = top_score if top_score is not None else (float(candidates[0].get("score", 0.5)) if candidates else 0.0)
-    s_second = float(candidates[1].get("score", s_top)) if len(candidates) > 1 else s_top
-    s_gap = score_gap if score_gap is not None else (s_top - s_second)
+    cand_len = len(candidates) if candidates else 0
+    if cand_len == 0:
+        return True, "Heuristic Rescorer skipped: Zero candidate chunks."
 
-    if s_top >= ADAPTIVE_SIMPLE_THRESHOLD and s_gap >= ADAPTIVE_SCORE_GAP_THRESHOLD:
-        return True, f"Heuristic Rescorer skipped: Decisive top candidate relevance (score {s_top:.2f} >= {ADAPTIVE_SIMPLE_THRESHOLD}, gap {s_gap:.2f} >= {ADAPTIVE_SCORE_GAP_THRESHOLD})."
+    if norm_mode == "deep_research":
+        if cand_len < 2:
+            return True, "Heuristic Rescorer skipped: Deep research candidate pool < 2."
+        return False, ""
+
+    if norm_mode == "fast" or norm_comp == "fast":
+        if cand_len < 3:
+            return True, "Heuristic Rescorer skipped: Fast mode requires >= 3 candidates for rescoring."
+        s_top = top_score if top_score is not None else (float(candidates[0].get("score", 0.5)) if candidates else 0.0)
+        s_second = float(candidates[1].get("score", s_top)) if len(candidates) > 1 else s_top
+        s_gap = score_gap if score_gap is not None else (s_top - s_second)
+        # Fast mode: only invoke when top candidate score is ambiguous or gap is tight
+        if s_top >= 0.70 and s_gap >= 0.08:
+            return True, f"Heuristic Rescorer skipped: Decisive top candidate relevance in Fast mode (score {s_top:.2f}, gap {s_gap:.2f})."
+        return False, ""
+
+    # ADAPTIVE_RAG (default)
+    if cand_len < 3:
+        return True, f"Heuristic Rescorer skipped: Candidate pool is small ({cand_len} < 3 chunks)."
 
     return False, ""
 
@@ -107,31 +133,43 @@ def rerank_candidates(
 
 def evaluate_heuristic_rescorer_impact(
     before_candidates: List[Dict[str, Any]],
-    after_candidates: List[Dict[str, Any]]
+    after_candidates: List[Dict[str, Any]],
+    duration_ms: int = 0,
+    invoked: bool = True
 ) -> Dict[str, Any]:
     """
-    Measures before/after ranking quality to verify if the heuristic rescorer
-    meaningfully altered candidate ordering.
+    Measures before/after ranking quality to provide authoritative telemetry:
+    - candidate_count
+    - rerank_invoked
+    - rerank_type ("HEURISTIC RESCORER")
+    - before_top_ids
+    - after_top_ids
+    - top1_changed
+    - top_k_changed
+    - duration_ms
     """
-    if not before_candidates or not after_candidates:
-        return {"reorder_rate": 0.0, "top_1_changed": False, "candidate_count": 0}
+    before_ids = [c.get("id") or c.get("chunk_id") or c.get("chunkId") for c in (before_candidates or [])]
+    after_ids = [c.get("id") or c.get("chunk_id") or c.get("chunkId") for c in (after_candidates or [])]
 
-    before_ids = [c.get("id") or c.get("chunk_id") for c in before_candidates]
-    after_ids = [c.get("id") or c.get("chunk_id") for c in after_candidates]
+    cand_cnt = len(before_candidates) if before_candidates else len(after_candidates) if after_candidates else 0
+    top_1_changed = (before_ids[0] != after_ids[0]) if (before_ids and after_ids) else False
+    top_k_changed = before_ids != after_ids if (before_ids and after_ids) else False
 
-    top_1_changed = before_ids[0] != after_ids[0] if before_ids and after_ids else False
-    
-    # Calculate how many positions changed
     matches = 0
     min_len = min(len(before_ids), len(after_ids))
     for i in range(min_len):
         if before_ids[i] == after_ids[i]:
             matches += 1
-    reorder_rate = round(1.0 - (matches / max(min_len, 1)), 3)
+    reorder_rate = round(1.0 - (matches / max(min_len, 1)), 3) if min_len > 0 else 0.0
 
     return {
+        "candidate_count": cand_cnt,
+        "rerank_invoked": invoked,
+        "rerank_type": "HEURISTIC RESCORER",
+        "before_top_ids": before_ids[:5],
+        "after_top_ids": after_ids[:5],
+        "top1_changed": top_1_changed,
+        "top_k_changed": top_k_changed,
         "reorder_rate": reorder_rate,
-        "top_1_changed": top_1_changed,
-        "candidate_count": min_len,
-        "scorer_type": "HEURISTIC RESCORER"
+        "duration_ms": duration_ms
     }

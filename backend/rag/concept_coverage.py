@@ -34,10 +34,17 @@ class ConceptCoverageResult(BaseModel):
 
 
 STOP_WORDS = {
-    "what", "when", "where", "which", "how", "does", "explain", "compare", "the", "and", "for", "with",
-    "uploaded", "document", "documents", "file", "files", "pdf", "tell", "show", "please", "list",
-    "difference", "differences", "between", "them", "both", "all", "about", "describe", "give", "definition",
-    "define", "overview", "detail", "details", "their", "b/w", "versus", "vs"
+    "what", "when", "where", "which", "how", "why", "who", "does", "did", "do",
+    "explain", "compare", "the", "and", "for", "with", "from", "into", "onto",
+    "uploaded", "document", "documents", "file", "files", "pdf", "tell", "show",
+    "please", "list", "difference", "differences", "between", "them", "both", "all",
+    "about", "describe", "give", "definition", "define", "overview", "detail",
+    "details", "their", "b/w", "versus", "vs", "complete", "summary", "summay",
+    "summarize", "entire", "whole", "full", "of", "this", "that", "these", "those",
+    "is", "are", "was", "were", "there", "any", "some", "other", "another",
+    "information", "info", "notes", "paper", "book", "text", "content", "read",
+    "write", "provide", "can", "you", "could", "would", "should", "me", "find",
+    "mention", "mentioned", "regard", "regarding"
 }
 
 # Distractor concepts in computer science notes that are frequently co-retrieved but unrelated
@@ -97,7 +104,10 @@ def extract_required_concepts(query: str) -> List[str]:
     while i < len(meaningful):
         if i + 1 < len(meaningful):
             pair = f"{meaningful[i]} {meaningful[i+1]}"
-            if pair in ["linked list", "binary search", "search space", "time complexity", "data structure"]:
+            if pair in [
+                "linked list", "binary search", "search space", "time complexity",
+                "data structure", "data structures", "binary tree", "heap sort"
+            ]:
                 final_concepts.append(pair)
                 i += 2
                 continue
@@ -144,6 +154,11 @@ def analyze_concept_coverage(
                 if any(w in content for w in ["difference", "contrast", "versus", "vs", "compare", "whereas", "while"]):
                     concept_support[concept].append(chunk_id)
                     matched_for_this_chunk.add(concept)
+            elif concept in ["data structure", "data structures"]:
+                ds_terms = ["data structure", "data structures", "array", "arrays", "heap", "heaps", "tree", "trees", "list", "lists", "queue", "queues", "stack", "stacks", "graph", "graphs", "hash"]
+                if any(re.search(rf"\b{re.escape(t)}\b", full_text) for t in ds_terms):
+                    concept_support[concept].append(chunk_id)
+                    matched_for_this_chunk.add(concept)
             else:
                 pattern = rf"\b{re.escape(concept)}s?\b"
                 if re.search(pattern, full_text):
@@ -181,18 +196,30 @@ def analyze_concept_coverage(
         content = (s.get("chunkContent") or s.get("content") or s.get("text") or "").lower()
         title = (s.get("documentTitle") or s.get("title") or "").lower()
         full_text = f"{title} {content}"
+        supported_by_cid = chunk_supported_concepts.get(cid, set())
 
         for dist_name, patterns in KNOWN_DISTRACTORS.items():
+            # If the user asked about heaps, trees are intrinsically related (heaps are complete binary trees)
+            if dist_name == "tree" and any(k in required_concepts for k in ["heap", "heaps", "priority queue", "priority queues"]):
+                continue
+
             if dist_name not in required_concepts:
                 matched_dist = [p for p in patterns if p in full_text]
                 if matched_dist:
-                    # Check if cleaner chunks exist that support the covered concepts without this distractor
-                    cleaner_chunks = [
-                        cs for cs in sources
-                        if (cs.get("chunkId") or cs.get("id") or cs.get("chunk_id")) != cid
-                        and not any(p in (cs.get("content") or cs.get("chunkContent") or "").lower() for p in patterns)
-                    ]
-                    if cleaner_chunks:
+                    # If this chunk directly supports required query concepts, only mark as distractor
+                    # if cleaner chunks exist that support ALL the same concepts without the distractor
+                    if supported_by_cid:
+                        cleaner_chunks = [
+                            cs for cs in sources
+                            if (cs.get("chunkId") or cs.get("id") or cs.get("chunk_id")) != cid
+                            and supported_by_cid.issubset(chunk_supported_concepts.get(cs.get("chunkId") or cs.get("id") or cs.get("chunk_id"), set()))
+                            and not any(p in (cs.get("content") or cs.get("chunkContent") or "").lower() for p in patterns)
+                        ]
+                        if cleaner_chunks:
+                            distractor_chunk_ids.append(cid)
+                            break
+                    else:
+                        # Chunk does not support any required concepts and contains distractor patterns
                         distractor_chunk_ids.append(cid)
                         break
 

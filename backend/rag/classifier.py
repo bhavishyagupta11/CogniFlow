@@ -60,27 +60,18 @@ def classify_query(question: str, mode: str = "deep_research") -> QueryComplexit
     words = re.findall(r"\b[a-zA-Z0-9_-]+\b", q)
     num_words = len(words)
 
-    # 0. Full-Document Summary Intent Signals (Requirement 1 & 2)
+    # 0. Full-Document, Section, and Page Range Summary Intent Signals
     summary_intent_patterns = [
-        r"\bcomplete\s+summary\b",
-        r"\bentire\s+document\b",
-        r"\bwhole\s+document\b",
-        r"\bentire\s+pdf\b",
-        r"\bwhole\s+pdf\b",
+        r"\b(?:complete|full|entire|whole|comprehensive|thorough|detailed)?\s*summa?ry\b",
+        r"\bwrite\s+(?:a\s+)?(?:complete\s+|full\s+)?summa?ry\b",
+        r"\bgive\s+(?:me\s+)?(?:a\s+)?(?:complete\s+|full\s+)?summa?ry\b",
+        r"\bsumma?ri[zs]e\b",
         r"\bfrom\s+(?:the\s+)?(?:first|0|page\s*0)\s+(?:page\s+)?to\s+(?:the\s+)?last\s+page\b",
-        r"\bfrom\s+page\s+0\s+to\s+(?:the\s+)?last\s+page\b",
-        r"\bpage\s+0\s+to\s+(?:the\s+)?last\s+page\b",
-        r"\b0\s+to\s+(?:the\s+)?last\s+page\b",
-        r"\bsummarize\s+all\s+pages\b",
-        r"\bsummary\s+(?:from|of)\s+all\s+pages\b",
-        r"\bsummary\s+from\s+page\b",
+        r"\bfrom\s+page\s+\d+\s+to\s+(?:page\s+)?\d+\b",
+        r"\bpages?\s+\d+\s*(?:to|-)\s*\d+\s+summa?ry\b",
+        r"\bchapter[- ]?(?:wise|by[- ]?chapter|\d+)\s+summa?ry\b",
+        r"\bsection\s+\d+\s+summa?ry\b",
         r"\bnothing\s+should\s+be\s+missed\b",
-        r"\bchapter[- ]?wise\s+summary\b",
-        r"\bfull\s+pdf\s+summary\b",
-        r"\bfull\s+document\s+summary\b",
-        r"\bsummarize\s+(?:the\s+)?(?:entire|whole|all)\b",
-        r"\bcomprehensive\s+(?:document\s+)?summary\b",
-        r"\bsummarize\s+from\s+(?:page\s+0|first\s+page)\b",
     ]
     if any(re.search(pat, q, re.IGNORECASE) for pat in summary_intent_patterns):
         return QueryComplexityDecision(

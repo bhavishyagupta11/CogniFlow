@@ -188,14 +188,19 @@ async def ingest_file(
         existing = next((d for d in session_docs if d.get("hash") == file_hash), None)
 
     if existing:
+        existing_filename = existing.get("originalFilename") or existing.get("original_filename") or existing.get("filename")
+        if existing_filename and existing_filename.strip().lower() != safe_filename.strip().lower():
+            dup_msg = f"This file has already been uploaded as '{existing_filename}'."
+        else:
+            dup_msg = f"File '{safe_filename}' already exists in your knowledge base."
         return {
             "ok": False,
             "status": 409,
             "error": {
                 "code": "DUPLICATE",
-                "message": f"File '{safe_filename}' already exists in your knowledge base.",
+                "message": dup_msg,
                 "existingId": existing.get("id") or existing.get("document_id"),
-                "existingFilename": existing.get("originalFilename") or existing.get("original_filename")
+                "existingFilename": existing_filename
             }
         }
 
