@@ -744,7 +744,7 @@ async def run_rag_pipeline(
     })
 
     if not needs_rerank:
-        skip_reason = "Decisive top candidate relevance; reranker skipped to conserve latency."
+        skip_reason = "Decisive top candidate relevance; heuristic rescorer skipped to conserve latency."
         yield sse_event({
             "type": "stage_skipped",
             "requestId": request_id,
@@ -764,7 +764,7 @@ async def run_rag_pipeline(
         reranker_step = {
             "id": f"step-reranker-{step3_start}",
             "agent": "reranker",
-            "label": "Reranking skipped (high-confidence retrieval)",
+            "label": "HEURISTIC RESCORER — SKIPPED (high-confidence retrieval)",
             "status": "skipped",
             "startedAt": step3_start,
             "finishedAt": int(time.time() * 1000),
@@ -778,7 +778,7 @@ async def run_rag_pipeline(
             "requestId": request_id,
             "request_id": request_id,
             "stage": "reranker",
-            "label": "Reranker",
+            "label": "HEURISTIC RESCORER",
             "status": "RUNNING",
             "mode": user_mode,
             "timestamp": step3_start,
@@ -787,7 +787,7 @@ async def run_rag_pipeline(
         yield sse_event({
             "type": "agent_start",
             "agent": "reranker",
-            "label": f"Reranking {len(formatted_sources)} candidates...",
+            "label": f"HEURISTIC RESCORER evaluating {len(formatted_sources)} candidates...",
             "startedAt": step3_start
         })
         yield sse_event({
@@ -817,7 +817,7 @@ async def run_rag_pipeline(
         reranker_step = {
             "id": f"step-reranker-{step3_start}",
             "agent": "reranker",
-            "label": f"Reranked {len(formatted_sources)} candidates (NumPy scored)",
+            "label": f"HEURISTIC RESCORER · {len(formatted_sources)} candidates ({tracker.reranking_ms}ms)",
             "status": "completed",
             "startedAt": step3_start,
             "finishedAt": int(time.time() * 1000),
@@ -1024,147 +1024,96 @@ async def run_rag_pipeline(
         )
         user_prompt = f"Question: {question}\n\nEvidence:\n{full_context}\n\nRemember to cite claims with [E1], [E2] inline.\n\nAnswer:"
 
-    raw_answer = ""
-    token_count = 0
-
-    async for token in stream_llm_response(
-        user_prompt=user_prompt,
-        system_prompt=system_prompt,
-        sources=selected_sources
-    ):
-        if request and await request.is_disconnected():
-            yield sse_event({"type": "cancelled", "reason": "Client disconnected during generation"})
-            return
-
-        tracker.record_first_token()
-        raw_answer += token
-        token_count += 1
-        yield sse_event({
-            "type": "token",
-            "requestId": request_id,
-            "request_id": request_id,
-            "stage": "generator",
-            "delta": token,
-            "content": token,
-            "timestamp": int(time.time() * 1000)
-        })
-        yield sse_event({
-            "type": "text_delta",
-            "requestId": request_id,
-            "delta": token,
-            "content": token
-        })
-
-    tracker.total_tokens = token_count
-    tracker.generation_ms = max(int((time.time() - g_start) * 1000), 50)
-    step4_finish = int(time.time() * 1000)
-
-    # Deterministic Citation Assembly & Fail-Safe Validation
-    sanitized_answer, validated_citations, citation_issues = citation_assembler.map_and_validate_citations(
-        answer_text=raw_answer,
-        retrieved_sources=selected_sources
-    )
-
-    provider_telemetry = get_latest_provider_telemetry()
-    actual_provider = provider_telemetry.get("actual_provider") or provider_telemetry.get("provider") or PRIMARY_PROVIDER
-    actual_model = provider_telemetry.get("actual_model") or provider_telemetry.get("model") or PRIMARY_MODEL
-    requested_provider = provider_telemetry.get("requested_provider", PRIMARY_PROVIDER)
-    requested_model = provider_telemetry.get("requested_model", PRIMARY_MODEL)
-    fallback_occurred = provider_telemetry.get("fallback_occurred", False)
-    fallback_reason = provider_telemetry.get("fallback_reason", None)
-    retry_count = provider_telemetry.get("retry_count", 0)
-
-    yield sse_event({
-        "type": "stage_completed",
-        "requestId": request_id,
-        "request_id": request_id,
-        "stage": "generator",
-        "status": "COMPLETED",
-        "mode": user_mode,
-        "durationMs": tracker.generation_ms,
-        "provider": actual_provider,
-        "model": actual_model,
-        "requestedProvider": requested_provider,
-        "actualProvider": actual_provider,
-        "requestedModel": requested_model,
-        "actualModel": actual_model,
-        "fallbackOccurred": fallback_occurred,
-        "fallbackReason": fallback_reason,
-        "retryCount": retry_count,
-        "citationsUsed": len(validated_citations),
-        "timestamp": step4_finish
-    })
-    yield sse_event({
-        "type": "generation_completed",
-        "requestId": request_id,
-        "durationMs": tracker.generation_ms,
-        "provider": actual_provider,
-        "model": actual_model,
-        "requestedProvider": requested_provider,
-        "actualProvider": actual_provider,
-        "requestedModel": requested_model,
-        "actualModel": actual_model,
-        "fallbackOccurred": fallback_occurred,
-        "fallbackReason": fallback_reason
-    })
-
-    generator_step = {
-        "id": f"step-generator-{step4_start}",
-        "agent": "generator",
-        "label": f"Generated grounded response ({execution_complexity.upper()} policy)",
-        "status": "completed",
-        "startedAt": step4_start,
-        "finishedAt": step4_finish,
-        "durationMs": tracker.generation_ms,
-        "input": {"question": question, "evidenceChunks": len(context_blocks)},
-        "output": {
-            "answer": sanitized_answer,
-            "citationsUsed": len(validated_citations),
-            "citations": validated_citations
-        }
-    }
-    steps.append(generator_step)
-    yield sse_event({"type": "agent_finish", "step": generator_step})
-
-    # Emit citation events
-    for cite in validated_citations:
-        yield sse_event({
-            "type": "citation",
-            "requestId": request_id,
-            "request_id": request_id,
-            "stage": "generator",
-            "evidenceId": cite.get("citationId"),
-            "documentId": cite.get("documentId"),
-            "pageStart": cite.get("pageStart"),
-            "pageEnd": cite.get("pageEnd"),
-            "timestamp": int(time.time() * 1000)
-        })
-        yield sse_event({
-            "type": "citation_event",
-            "requestId": request_id,
-            "evidenceId": cite.get("citationId"),
-            "documentId": cite.get("documentId"),
-            "pageStart": cite.get("pageStart"),
-            "pageEnd": cite.get("pageEnd")
-        })
-
-    # ─────────────────────────────────────────────────────────────────
-    # STAGE 8: SELECTIVE VERIFICATION (Specification Section 20)
-    # ─────────────────────────────────────────────────────────────────
-    v_start = time.time()
-    step5_start = int(time.time() * 1000)
-
-    yield sse_event({
-        "type": "stage_queued",
-        "requestId": request_id,
-        "request_id": request_id,
-        "stage": "verifier",
-        "status": "QUEUED",
-        "mode": user_mode,
-        "timestamp": step5_start
-    })
-    tracker.verification_used = needs_verify
     if needs_verify:
+        # ─────────────────────────────────────────────────────────────
+        # PATH REQUIRING VERIFICATION:
+        # retrieval → rerank/evidence synthesis → draft generation → verification → final grounded generation → citations → stream
+        # ─────────────────────────────────────────────────────────────
+        step_draft_start = int(time.time() * 1000)
+        yield sse_event({
+            "type": "stage_queued",
+            "requestId": request_id,
+            "request_id": request_id,
+            "stage": "draft_generator",
+            "status": "QUEUED",
+            "mode": user_mode,
+            "timestamp": step_draft_start
+        })
+        yield sse_event({
+            "type": "stage_started",
+            "requestId": request_id,
+            "request_id": request_id,
+            "stage": "draft_generator",
+            "label": "Draft Generator",
+            "status": "RUNNING",
+            "mode": user_mode,
+            "timestamp": step_draft_start,
+            "provider": PRIMARY_PROVIDER,
+            "model": PRIMARY_MODEL
+        })
+        yield sse_event({
+            "type": "agent_start",
+            "agent": "draft_generator",
+            "label": "Generating draft synthesis for verification...",
+            "startedAt": step_draft_start
+        })
+
+        draft_raw_answer = ""
+        token_count = 0
+        g_start = time.time()
+        async for token in stream_llm_response(
+            user_prompt=user_prompt,
+            system_prompt=system_prompt,
+            sources=selected_sources
+        ):
+            if request and await request.is_disconnected():
+                yield sse_event({"type": "cancelled", "reason": "Client disconnected during draft generation"})
+                return
+            tracker.record_first_token()
+            draft_raw_answer += token
+            token_count += 1
+
+        tracker.total_tokens = token_count
+        tracker.generation_ms = max(int((time.time() - g_start) * 1000), 50)
+        step_draft_finish = int(time.time() * 1000)
+
+        yield sse_event({
+            "type": "stage_completed",
+            "requestId": request_id,
+            "request_id": request_id,
+            "stage": "draft_generator",
+            "status": "COMPLETED",
+            "mode": user_mode,
+            "durationMs": tracker.generation_ms,
+            "timestamp": step_draft_finish
+        })
+        draft_step = {
+            "id": f"step-draft-{step_draft_start}",
+            "agent": "draft_generator",
+            "label": f"Draft synthesis generated ({execution_complexity.upper()} policy)",
+            "status": "completed",
+            "startedAt": step_draft_start,
+            "finishedAt": step_draft_finish,
+            "durationMs": tracker.generation_ms,
+            "input": {"question": question, "evidenceChunks": len(context_blocks)},
+            "output": {"draftLength": len(draft_raw_answer)}
+        }
+        steps.append(draft_step)
+        yield sse_event({"type": "agent_finish", "step": draft_step})
+
+        # VERIFICATION STEP (Stage 8)
+        v_start = time.time()
+        step5_start = int(time.time() * 1000)
+        yield sse_event({
+            "type": "stage_queued",
+            "requestId": request_id,
+            "request_id": request_id,
+            "stage": "verifier",
+            "status": "QUEUED",
+            "mode": user_mode,
+            "timestamp": step5_start
+        })
+        tracker.verification_used = True
         yield sse_event({
             "type": "stage_started",
             "requestId": request_id,
@@ -1178,12 +1127,13 @@ async def run_rag_pipeline(
         yield sse_event({
             "type": "agent_start",
             "agent": "verifier",
-            "label": "Evaluating claim grounding & citations...",
+            "label": "Evaluating claim grounding & citations against evidence...",
             "startedAt": step5_start
         })
         yield sse_event({"type": "verification_started", "requestId": request_id})
+
         claims, verdict, faith_score, issues, _ = verify_citations(
-            answer=sanitized_answer,
+            answer=draft_raw_answer,
             sources=selected_sources,
             complexity=execution_complexity
         )
@@ -1221,7 +1171,275 @@ async def run_rag_pipeline(
         }
         steps.append(verifier_step)
         yield sse_event({"type": "agent_finish", "step": verifier_step})
+
+        # FINAL GROUNDED GENERATION, CITATIONS & STREAMING
+        step4_start = int(time.time() * 1000)
+        yield sse_event({
+            "type": "stage_queued",
+            "requestId": request_id,
+            "request_id": request_id,
+            "stage": "generator",
+            "status": "QUEUED",
+            "mode": user_mode,
+            "timestamp": step4_start
+        })
+        yield sse_event({
+            "type": "stage_started",
+            "requestId": request_id,
+            "request_id": request_id,
+            "stage": "generator",
+            "label": "Final Generator",
+            "status": "RUNNING",
+            "mode": user_mode,
+            "timestamp": step4_start,
+            "provider": PRIMARY_PROVIDER,
+            "model": PRIMARY_MODEL
+        })
+        yield sse_event({
+            "type": "agent_start",
+            "agent": "generator",
+            "label": "Streaming verified grounded response...",
+            "startedAt": step4_start
+        })
+        yield sse_event({
+            "type": "generation_started",
+            "requestId": request_id,
+            "mode": user_mode,
+            "complexity": execution_complexity,
+            "provider": PRIMARY_PROVIDER,
+            "model": PRIMARY_MODEL
+        })
+
+        # Map and validate citations on verified draft
+        sanitized_answer, validated_citations, citation_issues = citation_assembler.map_and_validate_citations(
+            answer_text=draft_raw_answer,
+            retrieved_sources=selected_sources
+        )
+
+        # Emit citation events before streaming tokens
+        for cite in validated_citations:
+            yield sse_event({
+                "type": "citation",
+                "requestId": request_id,
+                "request_id": request_id,
+                "stage": "generator",
+                "evidenceId": cite.get("citationId"),
+                "documentId": cite.get("documentId"),
+                "pageStart": cite.get("pageStart"),
+                "pageEnd": cite.get("pageEnd"),
+                "timestamp": int(time.time() * 1000)
+            })
+            yield sse_event({
+                "type": "citation_event",
+                "requestId": request_id,
+                "evidenceId": cite.get("citationId"),
+                "documentId": cite.get("documentId"),
+                "pageStart": cite.get("pageStart"),
+                "pageEnd": cite.get("pageEnd")
+            })
+
+        # Stream verified final answer in natural chunks
+        chunk_sz = 16
+        for i in range(0, len(sanitized_answer), chunk_sz):
+            if request and await request.is_disconnected():
+                yield sse_event({"type": "cancelled", "reason": "Client disconnected during streaming"})
+                return
+            piece = sanitized_answer[i:i + chunk_sz]
+            yield sse_event({
+                "type": "token",
+                "requestId": request_id,
+                "request_id": request_id,
+                "stage": "generator",
+                "delta": piece,
+                "content": piece,
+                "timestamp": int(time.time() * 1000)
+            })
+            yield sse_event({
+                "type": "text_delta",
+                "requestId": request_id,
+                "delta": piece,
+                "content": piece
+            })
+            await asyncio.sleep(0.005)
+
+        step4_finish = int(time.time() * 1000)
+        provider_telemetry = get_latest_provider_telemetry()
+        actual_provider = provider_telemetry.get("actual_provider") or provider_telemetry.get("provider") or PRIMARY_PROVIDER
+        actual_model = provider_telemetry.get("actual_model") or provider_telemetry.get("model") or PRIMARY_MODEL
+        requested_provider = provider_telemetry.get("requested_provider", PRIMARY_PROVIDER)
+        requested_model = provider_telemetry.get("requested_model", PRIMARY_MODEL)
+        fallback_occurred = provider_telemetry.get("fallback_occurred", False)
+        fallback_reason = provider_telemetry.get("fallback_reason", None)
+        retry_count = provider_telemetry.get("retry_count", 0)
+
+        yield sse_event({
+            "type": "stage_completed",
+            "requestId": request_id,
+            "request_id": request_id,
+            "stage": "generator",
+            "status": "COMPLETED",
+            "mode": user_mode,
+            "durationMs": tracker.generation_ms,
+            "provider": actual_provider,
+            "model": actual_model,
+            "requestedProvider": requested_provider,
+            "actualProvider": actual_provider,
+            "requestedModel": requested_model,
+            "actualModel": actual_model,
+            "fallbackOccurred": fallback_occurred,
+            "fallbackReason": fallback_reason,
+            "retryCount": retry_count,
+            "citationsUsed": len(validated_citations),
+            "timestamp": step4_finish
+        })
+        yield sse_event({
+            "type": "generation_completed",
+            "requestId": request_id,
+            "durationMs": tracker.generation_ms,
+            "provider": actual_provider,
+            "model": actual_model,
+            "requestedProvider": requested_provider,
+            "actualProvider": actual_provider,
+            "requestedModel": requested_model,
+            "actualModel": actual_model,
+            "fallbackOccurred": fallback_occurred,
+            "fallbackReason": fallback_reason
+        })
+        generator_step = {
+            "id": f"step-generator-{step4_start}",
+            "agent": "generator",
+            "label": f"Emitted verified grounded response ({execution_complexity.upper()} policy)",
+            "status": "completed",
+            "startedAt": step4_start,
+            "finishedAt": step4_finish,
+            "durationMs": tracker.generation_ms,
+            "input": {"question": question, "evidenceChunks": len(context_blocks)},
+            "output": {
+                "answer": sanitized_answer,
+                "citationsUsed": len(validated_citations),
+                "citations": validated_citations
+            }
+        }
+        steps.append(generator_step)
+        yield sse_event({"type": "agent_finish", "step": generator_step})
+
     else:
+        # ─────────────────────────────────────────────────────────────
+        # HIGH-CONFIDENCE / SIMPLE PATH:
+        # retrieval → generation → citations → stream
+        # ─────────────────────────────────────────────────────────────
+        step4_start = int(time.time() * 1000)
+        yield sse_event({
+            "type": "stage_queued",
+            "requestId": request_id,
+            "request_id": request_id,
+            "stage": "generator",
+            "status": "QUEUED",
+            "mode": user_mode,
+            "timestamp": step4_start
+        })
+        yield sse_event({
+            "type": "stage_started",
+            "requestId": request_id,
+            "request_id": request_id,
+            "stage": "generator",
+            "label": "Final Generator",
+            "status": "RUNNING",
+            "mode": user_mode,
+            "timestamp": step4_start,
+            "provider": PRIMARY_PROVIDER,
+            "model": PRIMARY_MODEL
+        })
+        yield sse_event({
+            "type": "agent_start",
+            "agent": "generator",
+            "label": "Generating grounded response...",
+            "startedAt": step4_start
+        })
+        yield sse_event({
+            "type": "generation_started",
+            "requestId": request_id,
+            "mode": user_mode,
+            "complexity": execution_complexity,
+            "provider": PRIMARY_PROVIDER,
+            "model": PRIMARY_MODEL
+        })
+
+        raw_answer = ""
+        token_count = 0
+        g_start = time.time()
+
+        async for token in stream_llm_response(
+            user_prompt=user_prompt,
+            system_prompt=system_prompt,
+            sources=selected_sources
+        ):
+            if request and await request.is_disconnected():
+                yield sse_event({"type": "cancelled", "reason": "Client disconnected during generation"})
+                return
+
+            tracker.record_first_token()
+            raw_answer += token
+            token_count += 1
+
+        tracker.total_tokens = token_count
+        tracker.generation_ms = max(int((time.time() - g_start) * 1000), 50)
+
+        # Citations Assembly (before streaming to client)
+        sanitized_answer, validated_citations, citation_issues = citation_assembler.map_and_validate_citations(
+            answer_text=raw_answer,
+            retrieved_sources=selected_sources
+        )
+
+        for cite in validated_citations:
+            yield sse_event({
+                "type": "citation",
+                "requestId": request_id,
+                "request_id": request_id,
+                "stage": "generator",
+                "evidenceId": cite.get("citationId"),
+                "documentId": cite.get("documentId"),
+                "pageStart": cite.get("pageStart"),
+                "pageEnd": cite.get("pageEnd"),
+                "timestamp": int(time.time() * 1000)
+            })
+            yield sse_event({
+                "type": "citation_event",
+                "requestId": request_id,
+                "evidenceId": cite.get("citationId"),
+                "documentId": cite.get("documentId"),
+                "pageStart": cite.get("pageStart"),
+                "pageEnd": cite.get("pageEnd")
+            })
+
+        # Stream grounded and citation-resolved answer to client
+        chunk_sz = 16
+        for i in range(0, len(sanitized_answer), chunk_sz):
+            if request and await request.is_disconnected():
+                yield sse_event({"type": "cancelled", "reason": "Client disconnected during streaming"})
+                return
+            piece = sanitized_answer[i:i + chunk_sz]
+            yield sse_event({
+                "type": "token",
+                "requestId": request_id,
+                "request_id": request_id,
+                "stage": "generator",
+                "delta": piece,
+                "content": piece,
+                "timestamp": int(time.time() * 1000)
+            })
+            yield sse_event({
+                "type": "text_delta",
+                "requestId": request_id,
+                "delta": piece,
+                "content": piece
+            })
+            await asyncio.sleep(0.005)
+
+        step4_finish = int(time.time() * 1000)
+
+        # Verification Skipped
+        step5_start = int(time.time() * 1000)
         yield sse_event({
             "type": "stage_skipped",
             "requestId": request_id,
@@ -1230,7 +1448,7 @@ async def run_rag_pipeline(
             "status": "SKIPPED",
             "mode": user_mode,
             "reason": "Verification skipped: high-confidence grounded evidence (fast/simple path).",
-            "timestamp": int(time.time() * 1000)
+            "timestamp": step5_start
         })
         yield sse_event({
             "type": "verification_skipped",
@@ -1243,13 +1461,73 @@ async def run_rag_pipeline(
             "label": "Verification skipped (high-confidence grounded evidence)",
             "status": "skipped",
             "startedAt": step5_start,
-            "finishedAt": int(time.time() * 1000),
+            "finishedAt": step5_start,
             "durationMs": 1,
             "input": {"skipReason": "high-confidence grounded evidence"},
             "output": {"verdict": "skipped"}
         }
         steps.append(verifier_step)
         yield sse_event({"type": "agent_finish", "step": verifier_step})
+
+        provider_telemetry = get_latest_provider_telemetry()
+        actual_provider = provider_telemetry.get("actual_provider") or provider_telemetry.get("provider") or PRIMARY_PROVIDER
+        actual_model = provider_telemetry.get("actual_model") or provider_telemetry.get("model") or PRIMARY_MODEL
+        requested_provider = provider_telemetry.get("requested_provider", PRIMARY_PROVIDER)
+        requested_model = provider_telemetry.get("requested_model", PRIMARY_MODEL)
+        fallback_occurred = provider_telemetry.get("fallback_occurred", False)
+        fallback_reason = provider_telemetry.get("fallback_reason", None)
+        retry_count = provider_telemetry.get("retry_count", 0)
+
+        yield sse_event({
+            "type": "stage_completed",
+            "requestId": request_id,
+            "request_id": request_id,
+            "stage": "generator",
+            "status": "COMPLETED",
+            "mode": user_mode,
+            "durationMs": tracker.generation_ms,
+            "provider": actual_provider,
+            "model": actual_model,
+            "requestedProvider": requested_provider,
+            "actualProvider": actual_provider,
+            "requestedModel": requested_model,
+            "actualModel": actual_model,
+            "fallbackOccurred": fallback_occurred,
+            "fallbackReason": fallback_reason,
+            "retryCount": retry_count,
+            "citationsUsed": len(validated_citations),
+            "timestamp": step4_finish
+        })
+        yield sse_event({
+            "type": "generation_completed",
+            "requestId": request_id,
+            "durationMs": tracker.generation_ms,
+            "provider": actual_provider,
+            "model": actual_model,
+            "requestedProvider": requested_provider,
+            "actualProvider": actual_provider,
+            "requestedModel": requested_model,
+            "actualModel": actual_model,
+            "fallbackOccurred": fallback_occurred,
+            "fallbackReason": fallback_reason
+        })
+        generator_step = {
+            "id": f"step-generator-{step4_start}",
+            "agent": "generator",
+            "label": f"Generated grounded response ({execution_complexity.upper()} policy)",
+            "status": "completed",
+            "startedAt": step4_start,
+            "finishedAt": step4_finish,
+            "durationMs": tracker.generation_ms,
+            "input": {"question": question, "evidenceChunks": len(context_blocks)},
+            "output": {
+                "answer": sanitized_answer,
+                "citationsUsed": len(validated_citations),
+                "citations": validated_citations
+            }
+        }
+        steps.append(generator_step)
+        yield sse_event({"type": "agent_finish", "step": generator_step})
 
     # ─────────────────────────────────────────────────────────────────
     # STAGE 9: AUTHORITATIVE TELEMETRY & COMPLETION

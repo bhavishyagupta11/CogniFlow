@@ -29,10 +29,13 @@ def ensure_lsa_64d():
                 f"# Section {i}: Binary Search and Algorithmic Analysis {i}\n\n"
                 f"Binary search time complexity operates in logarithmic O(log n) performance across partitioned datasets. "
                 f"This deterministic module evaluates search space boundaries, asymptotic growth rates, and structural convergence properties. "
-                f"Concept vocabulary vector terms include keyword_{i}, metric_{i}, distribution_{i}, and variance_{i}."
+                f"Concept vocabulary vector terms include keyword_{i}, metric_{i}, distribution_{i}, and variance_{i}.\n"
+                f"Further elaborations on asymptotic complexity and partition bounds for section {i}: "
+                f"The algorithm recursively divides the candidate interval in half until the target is located or the subarray is empty. "
+                f"Each partition step performs constant O(1) comparison work, yielding recurrence T(n) = T(n/2) + O(1) = O(log n)."
             )
         }
-        for i in range(1, 75)
+        for i in range(1, 80)
     ]
     vector_store.add_document(doc_id, "Deterministic LSA Test Document", pages)
     try:

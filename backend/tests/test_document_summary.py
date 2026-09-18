@@ -69,7 +69,15 @@ def test_standard_query_still_uses_normal_rag():
 
 def test_document_targeting_for_summary():
     """Requirement 3: Resolve the selected document explicitly for document summary queries."""
-    manifest = get_manifest()
+    manifest = [{
+        "id": "doc_ds_test",
+        "document_id": "doc_ds_test",
+        "original_filename": "Data Structures Full Notes.pdf",
+        "originalFilename": "Data Structures Full Notes.pdf",
+        "page_count": 128,
+        "owner_id": "dev-user",
+        "ownerId": "dev-user"
+    }]
     q = "Give me the summary from page 0 to the last page, nothing should be missed from the summary, also outline the most important."
     
     target = resolve_document_target(q, owner_id="dev-user", manifest_override=manifest)
