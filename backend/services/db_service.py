@@ -771,10 +771,16 @@ class PostgresDatabaseService(BaseDatabaseService):
             yield wrapped_conn
             raw_conn.commit()
         except Exception:
-            raw_conn.rollback()
+            try:
+                raw_conn.rollback()
+            except Exception:
+                pass
             raise
         finally:
-            pool.putconn(raw_conn)
+            try:
+                pool.putconn(raw_conn)
+            except Exception:
+                pass
 
     def init_db(self) -> None:
         schema_path = os.path.join(os.path.dirname(__file__), "..", "db", "schema.sql")
