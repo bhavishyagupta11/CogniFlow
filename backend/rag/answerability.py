@@ -8,7 +8,7 @@ Determines if retrieved evidence is sufficient to ground an answer:
 """
 
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from backend.models import AnswerabilityResult
 
 
@@ -168,17 +168,18 @@ def detect_answerability(
     )
 
 
-def check_document_summary_answerability(
+def validate_document_readiness(
     target_doc_id: Any,
     target_filename: Any,
     doc_exists: bool,
-    page_count: int,
-    processing_status: str = "completed"
+    page_count: Optional[int] = None,
+    processing_status: str = "completed",
+    is_pdf: bool = True
 ) -> AnswerabilityResult:
     """
-    Evaluates answerability for DOCUMENT_SUMMARY requests.
-    Validates document availability, processing status, and page presence rather than
-    relying on keyword coverage against top-k chunks.
+    DOCUMENT TARGET VALIDATION / DOCUMENT READINESS CHECK for DOCUMENT_SUMMARY requests.
+    Validates document availability, processing status, and content presence.
+    Bypasses normal QA retrieval, rescoring, and QA answerability gates.
     """
     if not doc_exists or not target_doc_id:
         msg = f"Target document '{target_filename or 'specified'}' not found in knowledge base."
@@ -191,8 +192,8 @@ def check_document_summary_answerability(
             conflictingChunkIds=[],
             reason=msg
         )
-    if processing_status != "completed" or page_count == 0:
-        msg = f"Document '{target_filename or target_doc_id}' has not completed processing or contains 0 pages."
+    if processing_status != "completed":
+        msg = f"Document '{target_filename or target_doc_id}' has not completed processing."
         return AnswerabilityResult(
             status="not_answerable",
             answerable=False,
@@ -202,6 +203,19 @@ def check_document_summary_answerability(
             conflictingChunkIds=[],
             reason=msg
         )
+    if is_pdf and (page_count is None or page_count <= 0):
+        msg = f"Document '{target_filename or target_doc_id}' contains 0 pages."
+        return AnswerabilityResult(
+            status="not_answerable",
+            answerable=False,
+            confidence=0.0,
+            supportingChunkIds=[],
+            missingInformation=[msg],
+            conflictingChunkIds=[],
+            reason=msg
+        )
+
+    scope_desc = f"{page_count} pages" if is_pdf and page_count else "structured sections"
     return AnswerabilityResult(
         status="fully_answerable",
         answerable=True,
@@ -209,5 +223,23 @@ def check_document_summary_answerability(
         supportingChunkIds=[f"{target_doc_id}#full-doc"],
         missingInformation=[],
         conflictingChunkIds=[],
-        reason=f"Complete document '{target_filename or target_doc_id}' ({page_count} pages) is indexed and verified for full-document summarization."
+        reason=f"Complete document '{target_filename or target_doc_id}' ({scope_desc}) is indexed and verified for hierarchical document summarization."
+    )
+
+
+def check_document_summary_answerability(
+    target_doc_id: Any,
+    target_filename: Any,
+    doc_exists: bool,
+    page_count: int,
+    processing_status: str = "completed"
+) -> AnswerabilityResult:
+    """Backward-compatible alias for existing tests."""
+    return validate_document_readiness(
+        target_doc_id=target_doc_id,
+        target_filename=target_filename,
+        doc_exists=doc_exists,
+        page_count=page_count,
+        processing_status=processing_status,
+        is_pdf=True
     )

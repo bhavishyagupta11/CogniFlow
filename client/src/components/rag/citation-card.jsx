@@ -7,9 +7,13 @@ export function CitationCard({ source, index, onOpenPdf }) {
   const sectionTitle = source.heading || source.section || source.chapter;
   const badgeLabel = source.badge || (typeof index === "string" ? index.replace(/^[\[\]]/g, "") : `E${index}`);
 
-  // Calculate accurate page display using pageStart/pageEnd or pageNumber
-  const pStart = source.pageStart || source.page_start || source.pageNumber || source.page_number;
-  const pEnd = source.pageEnd || source.page_end || pStart;
+  // Document metadata
+  const docTitle = source.documentTitle || source.documentName || source.originalFilename || source.filename || "Referenced Document";
+  const isPdf = (!source.format || source.format === "pdf") && docTitle.toLowerCase().endsWith(".pdf");
+
+  // Calculate accurate page display using pageStart/pageEnd or pageNumber only for PDFs
+  const pStart = isPdf ? (source.pageStart || source.page_start || source.pageNumber || source.page_number) : null;
+  const pEnd = isPdf ? (source.pageEnd || source.page_end || pStart) : null;
   const pageDisplay = pStart && pEnd && pStart !== pEnd ? `Pages ${pStart}–${pEnd}` : pStart ? `Page ${pStart}` : null;
 
   // Retrieve the full, unclipped evidence text from provenance fields
@@ -22,8 +26,6 @@ export function CitationCard({ source, index, onOpenPdf }) {
     ""
   ).trim();
 
-  // Document metadata
-  const docTitle = source.documentTitle || source.documentName || source.originalFilename || source.filename || "Referenced Document";
   const chunkIdShort = source.chunkId || source.chunk_id ? String(source.chunkId || source.chunk_id).split("#").pop() : null;
 
   // Only display verified badge if genuinely validated by backend
@@ -33,11 +35,12 @@ export function CitationCard({ source, index, onOpenPdf }) {
     if (!onOpenPdf) return;
     onOpenPdf({
       documentId: source.documentId || source.document_id,
-      pageNumber: pStart || 1,
-      pageStart: pStart || 1,
-      pageEnd: pEnd || pStart || 1,
+      pageNumber: pStart || (isPdf ? 1 : null),
+      pageStart: pStart,
+      pageEnd: pEnd,
       documentTitle: docTitle,
-      originalFilename: docTitle
+      originalFilename: docTitle,
+      format: isPdf ? "pdf" : (source.format || "txt")
     });
   };
 
@@ -129,11 +132,11 @@ export function CitationCard({ source, index, onOpenPdf }) {
                 variant="ghost"
                 size="sm"
                 data-testid="citation-open-pdf"
-                aria-label={`Open document at ${pageDisplay || "page 1"}`}
+                aria-label={`Open document ${pageDisplay ? `at ${pageDisplay}` : ""}`}
                 className="h-6 text-[10px] font-mono text-[#f97316] hover:text-[#ea580c] px-2 hover:bg-[#f97316]/10"
                 onClick={handleOpenPdf}
               >
-                OPEN PDF <ExternalLink className="ml-1 h-2.5 w-2.5" />
+                {isPdf ? "OPEN PDF" : "OPEN DOCUMENT"} <ExternalLink className="ml-1 h-2.5 w-2.5" />
               </Button>
             ) : null}
           </div>

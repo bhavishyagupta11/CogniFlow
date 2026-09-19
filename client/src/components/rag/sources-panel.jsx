@@ -69,7 +69,13 @@ export function SourcesPanel({ sources, onOpenPdf, }) {
                   {sectionTitle && (<span className="text-[var(--text-secondary)] truncate max-w-[160px] sm:max-w-[200px] min-w-0">
                       {sectionTitle}
                     </span>)}
-                  <span className="shrink-0">· {s.pageRange ? `Pages ${s.pageRange}` : `P.${s.pageNumber || 1}`}</span>
+                  {s.pageRange ? (
+                    <span className="shrink-0">· Pages {s.pageRange}</span>
+                  ) : (s.page_start || (s.pageNumber && (s.format === "pdf" || (s.documentTitle || s.originalFilename || "").toLowerCase().endsWith(".pdf")))) ? (
+                    <span className="shrink-0">· P.{s.page_start || s.pageNumber}</span>
+                  ) : s.source_location && !s.source_location.startsWith("p.") ? (
+                    <span className="shrink-0">· {s.source_location}</span>
+                  ) : null}
                   {s.batchId && <span className="shrink-0">· {s.batchId}</span>}
                   {hasParent && <span className="text-emerald-600 shrink-0">· Parent</span>}
                 </div>

@@ -13,6 +13,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Tuple
 from contextlib import contextmanager
+from pathlib import Path
 
 from backend.config import DATA_DIR, DATABASE_URL
 
@@ -42,7 +43,7 @@ def format_doc_dict(row: Dict[str, Any]) -> Dict[str, Any]:
     d["tenant_id"] = d.get("tenant_id") or d.get("tenantId") or owner
     d["tenantId"] = d["tenant_id"]
 
-    page_cnt = d.get("page_count") if d.get("page_count") is not None else d.get("pageCount", 1)
+    page_cnt = d.get("page_count") or d.get("pageCount") or 1
     d["page_count"] = page_cnt
     d["pageCount"] = page_cnt
 
@@ -64,12 +65,20 @@ def format_doc_dict(row: Dict[str, Any]) -> Dict[str, Any]:
 
     d["size"] = d.get("size_bytes") if d.get("size_bytes") is not None else d.get("size", 0)
     d["size_bytes"] = d["size"]
+    d["sizeBytes"] = d["size"]
+
+    ext = Path(orig_name).suffix.lower()
+    d["extension"] = d.get("extension") or ext
+    d["characterCount"] = d["char_count"]
+    d["status"] = proc_status
 
     d["uploadedAt"] = d.get("created_at") or d.get("uploadedAt") or utc_now_iso()
+    d["createdAt"] = d["uploadedAt"]
     d["lastModified"] = d.get("updated_at") or d.get("lastModified") or d["uploadedAt"]
     d["hash"] = d.get("file_hash") or d.get("hash") or ""
     d["file_hash"] = d["hash"]
-    d["filename"] = d.get("storage_filename") or d.get("filename") or f"{doc_id}.pdf"
+    d["fileHash"] = d["hash"]
+    d["filename"] = d.get("storage_filename") or d.get("filename") or f"{doc_id}{ext}"
     d["storage_filename"] = d["filename"]
     d["r2_upload_key"] = d.get("r2_upload_key") or f"uploads/{doc_id}/original"
     d["r2_extracted_key"] = d.get("r2_extracted_key") or f"extracted/{doc_id}/pages.json"
@@ -621,6 +630,10 @@ class SqliteDatabaseService(BaseDatabaseService):
 
     def delete_document(self, doc_id: str) -> bool:
         with self.get_connection() as conn:
+            conn.execute("DELETE FROM conversation_documents WHERE document_id = ?", (doc_id,))
+            conn.execute("DELETE FROM document_chunks WHERE document_id = ?", (doc_id,))
+            conn.execute("DELETE FROM document_embeddings WHERE document_id = ?", (doc_id,))
+            conn.execute("DELETE FROM document_summaries WHERE document_id = ?", (doc_id,))
             cursor = conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
             return cursor.rowcount > 0
 
@@ -644,9 +657,9 @@ class SqliteDatabaseService(BaseDatabaseService):
                         doc_id,
                         cid,
                         idx,
-                        c.get("page_number") or c.get("pageNumber", 1),
-                        c.get("page_start", c.get("page_number", 1)),
-                        c.get("page_end", c.get("page_number", 1)),
+                        c.get("page_number") or c.get("pageNumber") or 1,
+                        c.get("page_start") or c.get("page_number") or 1,
+                        c.get("page_end") or c.get("page_number") or 1,
                         c.get("section", ""),
                         c.get("subsection", ""),
                         c.get("source_location", ""),
@@ -669,7 +682,7 @@ class SqliteDatabaseService(BaseDatabaseService):
         with self.get_connection() as conn:
             rows = conn.execute(
                 """
-                SELECT c.*, d.owner_id, d.original_filename
+                SELECT c.*, d.owner_id, d.original_filename, d.storage_filename, d.mime_type
                 FROM document_chunks c
                 JOIN documents d ON c.document_id = d.id
                 WHERE d.lifecycle_state = 'ACTIVE'
@@ -681,6 +694,8 @@ class SqliteDatabaseService(BaseDatabaseService):
                 c = dict(r)
                 c["ownerId"] = c.get("owner_id", "dev-user")
                 c["originalFilename"] = c.get("original_filename", "")
+                c["storage_filename"] = c.get("storage_filename", f"{r['document_id']}.pdf")
+                c["mime_type"] = c.get("mime_type", "application/pdf")
                 c["pageNumber"] = c.get("page_number", 1)
                 result.append(c)
             return result
@@ -1149,6 +1164,10 @@ class PostgresDatabaseService(BaseDatabaseService):
     def delete_document(self, doc_id: str) -> bool:
         with self.get_connection() as conn:
             with conn.cursor() as cur:
+                cur.execute("DELETE FROM conversation_documents WHERE document_id = %s", (doc_id,))
+                cur.execute("DELETE FROM document_chunks WHERE document_id = %s", (doc_id,))
+                cur.execute("DELETE FROM document_embeddings WHERE document_id = %s", (doc_id,))
+                cur.execute("DELETE FROM document_summaries WHERE document_id = %s", (doc_id,))
                 cur.execute("DELETE FROM documents WHERE id = %s", (doc_id,))
                 return cur.rowcount > 0
 
@@ -1173,9 +1192,9 @@ class PostgresDatabaseService(BaseDatabaseService):
                             doc_id,
                             cid,
                             idx,
-                            c.get("page_number") or c.get("pageNumber", 1),
-                            c.get("page_start", c.get("page_number", 1)),
-                            c.get("page_end", c.get("page_number", 1)),
+                            c.get("page_number") or c.get("pageNumber") or 1,
+                            c.get("page_start") or c.get("page_number") or 1,
+                            c.get("page_end") or c.get("page_number") or 1,
                             c.get("section", ""),
                             c.get("subsection", ""),
                             c.get("source_location", ""),
@@ -1202,7 +1221,7 @@ class PostgresDatabaseService(BaseDatabaseService):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT c.*, d.owner_id, d.original_filename
+                    SELECT c.*, d.owner_id, d.original_filename, d.storage_filename, d.mime_type
                     FROM document_chunks c
                     JOIN documents d ON c.document_id = d.id
                     WHERE d.lifecycle_state = 'ACTIVE'
@@ -1216,6 +1235,8 @@ class PostgresDatabaseService(BaseDatabaseService):
                     c = dict(zip(cols, r))
                     c["ownerId"] = c.get("owner_id", "dev-user")
                     c["originalFilename"] = c.get("original_filename", "")
+                    c["storage_filename"] = c.get("storage_filename", f"{c['document_id']}.pdf")
+                    c["mime_type"] = c.get("mime_type", "application/pdf")
                     c["pageNumber"] = c.get("page_number", 1)
                     result.append(c)
                 return result

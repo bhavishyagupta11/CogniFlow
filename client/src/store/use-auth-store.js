@@ -12,6 +12,14 @@ function resolveUrl(path) {
 
 function getStoredSessionId() {
   try {
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlSession = urlParams.get("session_id") || urlParams.get("sessionId") || urlParams.get("guest_session_id");
+      if (urlSession) {
+        sessionStorage.setItem("cogniflow_guest_session_id", urlSession);
+        return urlSession;
+      }
+    }
     return sessionStorage.getItem("cogniflow_guest_session_id") || null;
   } catch {
     return null;

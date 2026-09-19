@@ -449,8 +449,8 @@ export function ChatPage() {
               msg.streamingStage = "Streaming complete hierarchical summary...";
             } else if (data.type === "retrieval_confidence") {
               msg.confidence = data.confidence;
-            } else if (data.type === "answerability_result") {
-              const raw = data.answerability || {};
+            } else if (data.type === "answerability_result" || data.type === "document_readiness_result") {
+              const raw = data.readiness || data.answerability || {};
               msg.answerability = {
                 ...raw,
                 missingInformation: normalizeArray(raw.missingInformation),
@@ -582,6 +582,18 @@ export function ChatPage() {
               };
               msg.content =
                 msg.errorDetails.userMessage || "An unexpected error occurred.";
+            } else if (data.type === "cancelled") {
+              if (liveTimerRef.current) {
+                clearInterval(liveTimerRef.current);
+                liveTimerRef.current = null;
+              }
+              msg.isStreaming = false;
+              msg.streamingStage = undefined;
+              msg.content = msg.content
+                ? `${msg.content}\n\n_(request cancelled: ${data.reason || "Client disconnected"})_`
+                : `_(request cancelled: ${data.reason || "Client disconnected"})_`;
+            } else if (data._isUnknownEvent) {
+              console.debug("[SSE Diagnostic] Unhandled SSE event safely ignored:", data.type, data);
             }
 
             newMessages[targetIdx] = msg;

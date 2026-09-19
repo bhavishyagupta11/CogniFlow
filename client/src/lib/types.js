@@ -272,21 +272,31 @@ export const SSEEventSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("sources"), sources: z.array(z.any()) }),
     z.object({ type: z.literal("retrieval_started"), queries: z.array(z.any()).optional() }),
     z.object({ type: z.literal("retrieval_completed"), count: z.number().optional() }),
+    z.object({ type: z.literal("reranking_started") }),
     z.object({ type: z.literal("reranking_skipped"), reason: z.string().optional() }),
-    z.object({ type: z.literal("token"), content: z.string() }),
+    z.object({ type: z.literal("generation_started"), provider: z.any().optional() }),
+    z.object({ type: z.literal("citation_event"), citation: z.any().optional() }).passthrough(),
+    z.object({ type: z.literal("verification_started") }),
+    z.object({ type: z.literal("verification_completed"), verdict: z.any().optional() }).passthrough(),
+    z.object({ type: z.literal("token"), content: z.string().optional(), delta: z.string().optional() }),
+    z.object({ type: z.literal("text_delta"), delta: z.string().optional(), content: z.string().optional() }),
+    z.object({ type: z.literal("route_selected"), mode: z.string().optional(), complexity: z.string().optional(), reason: z.string().optional() }),
     z.object({ type: z.literal("pipeline_complete"), result: z.any() }),
+    z.object({ type: z.literal("request_completed"), result: z.any().optional() }).passthrough(),
     z.object({ type: z.literal("pipeline_error"), error: z.any() }),
+    z.object({ type: z.literal("cancelled"), reason: z.string().optional() }),
     z.object({ type: z.literal("retrieval_plan"), plan: z.any() }),
     z.object({ type: z.literal("query_decomposed"), subqueries: z.array(z.any()) }),
     z.object({
         type: z.literal("retrieval_expanded"),
-        round: z.number(),
-        previousTopK: z.number(),
-        newTopK: z.number(),
-        reason: z.string(),
+        round: z.number().optional(),
+        previousTopK: z.number().optional(),
+        newTopK: z.number().optional(),
+        reason: z.string().optional(),
     }),
     z.object({ type: z.literal("retrieval_confidence"), confidence: z.any() }),
     z.object({ type: z.literal("answerability_result"), answerability: z.any() }),
+    z.object({ type: z.literal("document_readiness_result"), readiness: z.any().optional(), answerability: z.any().optional() }),
     z.object({ type: z.literal("claim_review"), claims: z.array(z.any()) }),
     z.object({ type: z.literal("summary_started"), documentId: z.any().optional(), documentTitle: z.any().optional(), pageCount: z.any().optional(), cached: z.any().optional() }),
     z.object({ type: z.literal("extraction_progress"), loadedPages: z.any().optional(), totalPages: z.any().optional(), cached: z.any().optional() }),
@@ -294,6 +304,7 @@ export const SSEEventSchema = z.discriminatedUnion("type", [
     z.object({ type: z.literal("combining_started"), totalBatches: z.any().optional() }),
     z.object({ type: z.literal("final_answer_started"), cached: z.any().optional() }),
 ]);
+
 export function safeParseSSEEvent(rawLine) {
     if (!rawLine.startsWith("data: "))
         return null;
@@ -307,12 +318,14 @@ export function safeParseSSEEvent(rawLine) {
             return parsed.data;
         }
         if (rawObj && typeof rawObj === "object" && "type" in rawObj) {
-            return rawObj;
+            // Unrecognized event type: annotate safely for structured diagnostic logging
+            return { ...rawObj, _isUnknownEvent: true };
         }
         return null;
     }
-    catch {
-        return null;
+    catch (err) {
+        console.warn("[SSE Parser] Non-fatal: failed to parse SSE json line:", jsonStr, err);
+        return { type: "parse_warning", error: "Malformed SSE line", raw: jsonStr };
     }
 }
 // --- Sample Prompts ---

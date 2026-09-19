@@ -17,6 +17,7 @@ import json
 import uuid
 import asyncio
 from typing import AsyncGenerator, Dict, Any, List, Optional
+from pathlib import Path
 from fastapi import Request
 
 from backend.models import QueryComplexityDecision, AnswerabilityResult
@@ -27,7 +28,7 @@ from backend.rag.retriever import parallel_retrieve, compute_retrieval_confidenc
 from backend.rag.reranker import should_skip_reranker, rerank_candidates, evaluate_heuristic_rescorer_impact
 from backend.rag.mmr import apply_mmr_diversity
 from backend.rag.vector_store import vector_store
-from backend.rag.answerability import detect_answerability, check_document_summary_answerability
+from backend.rag.answerability import detect_answerability, validate_document_readiness, check_document_summary_answerability
 from backend.rag.document_targeting import resolve_document_target
 from backend.rag.summarizer import (
     hierarchical_summarize_document,
@@ -373,15 +374,23 @@ async def run_rag_pipeline(
     target_scope = targeting.get("scope", "general_corpus")
     is_ambiguous = targeting.get("ambiguous", False)
 
-    # If no target_doc_id was explicitly extracted from question text, but exactly 1 source is attached, target that source
+    # If no target_doc_id was explicitly extracted from question text, check attached sources or single available document
+    from backend.rag.document_targeting import get_all_available_documents
+    user_avail_docs = get_all_available_documents(user_id)
     if not target_doc_id and allowed_document_ids and len(allowed_document_ids) == 1:
         target_doc_id = allowed_document_ids[0]
-        for m in get_manifest():
+        for m in user_avail_docs:
             if (m.get("id") or m.get("document_id")) == target_doc_id:
                 target_filename = m.get("originalFilename") or m.get("filename")
                 is_doc_specific = True
                 target_scope = "DOCUMENT"
                 break
+    elif not target_doc_id and len(user_avail_docs) == 1:
+        m = user_avail_docs[0]
+        target_doc_id = m.get("id") or m.get("document_id")
+        target_filename = m.get("originalFilename") or m.get("filename")
+        is_doc_specific = True
+        target_scope = "DOCUMENT"
 
     # Classify query intent for document summary intent
     decision: QueryComplexityDecision = classify_query(question, mode=user_mode)
@@ -472,40 +481,94 @@ async def run_rag_pipeline(
     # BRANCH 2: DOCUMENT SUMMARY ROUTE (Precomputed / Cache-Optimized)
     # ─────────────────────────────────────────────────────────────────
     if decision.complexity == "document_summary":
-        manifest = get_manifest()
-        target_entry = next((m for m in manifest if m.get("id") == target_doc_id or m.get("document_id") == target_doc_id), None)
+        tracker.complexity = "document_summary"
+        tracker.retrieval_strategy = "hierarchical_summary"
+        tracker.reranker_used = False
+        tracker.mmr_used = False
+        tracker.verification_used = False
+
+        target_entry = next((m for m in user_avail_docs if m.get("id") == target_doc_id or m.get("document_id") == target_doc_id), None)
+        if not target_entry:
+            fresh_docs = get_all_available_documents(user_id)
+            target_entry = next((m for m in fresh_docs if m.get("id") == target_doc_id or m.get("document_id") == target_doc_id), None)
+            if not target_entry and len(fresh_docs) == 1:
+                target_entry = fresh_docs[0]
+                target_doc_id = target_entry.get("id") or target_entry.get("document_id")
+                target_filename = target_entry.get("originalFilename") or target_entry.get("filename")
         doc_exists = bool(target_entry)
         page_count = (target_entry.get("pageCount") or target_entry.get("page_count", 0)) if target_entry else 0
         proc_status = (target_entry.get("processingStatus") or target_entry.get("processing_status", "completed")) if target_entry else "not_found"
+        is_target_pdf = (target_filename or "").lower().endswith(".pdf")
 
-        summary_answerability = check_document_summary_answerability(
+        # DOCUMENT TARGET VALIDATION / DOCUMENT READINESS CHECK
+        readiness_start = int(time.time() * 1000)
+        yield sse_event({
+            "type": "stage_started",
+            "requestId": request_id,
+            "request_id": request_id,
+            "stage": "readiness",
+            "label": "DOCUMENT READINESS CHECK",
+            "status": "RUNNING",
+            "mode": user_mode,
+            "timestamp": readiness_start
+        })
+
+        summary_readiness = validate_document_readiness(
             target_doc_id=target_doc_id,
             target_filename=target_filename,
             doc_exists=doc_exists,
             page_count=page_count,
-            processing_status=proc_status
+            processing_status=proc_status,
+            is_pdf=is_target_pdf
         )
-        answerability_dict = summary_answerability.model_dump()
+        readiness_dict = summary_readiness.model_dump()
+        readiness_duration = max(int(time.time() * 1000 - readiness_start), 1)
 
-        if not summary_answerability.answerable:
-            yield sse_event({"type": "answerability_result", "answerability": answerability_dict})
-            yield sse_event({"type": "text_delta", "delta": summary_answerability.reason, "content": summary_answerability.reason})
+        readiness_step = {
+            "id": f"step-readiness-{readiness_start}",
+            "agent": "readiness",
+            "label": f"DOCUMENT READINESS CHECK · {target_filename} ({'Verified' if summary_readiness.answerable else 'Failed'})",
+            "status": "completed" if summary_readiness.answerable else "failed",
+            "startedAt": readiness_start,
+            "finishedAt": int(time.time() * 1000),
+            "durationMs": readiness_duration,
+            "input": {"targetDocId": target_doc_id, "filename": target_filename, "isPdf": is_target_pdf},
+            "output": {"status": summary_readiness.status, "ready": summary_readiness.answerable, "reason": summary_readiness.reason}
+        }
+        steps.append(readiness_step)
+
+        yield sse_event({
+            "type": "stage_completed",
+            "requestId": request_id,
+            "request_id": request_id,
+            "stage": "readiness",
+            "label": "DOCUMENT READINESS CHECK",
+            "status": "COMPLETED" if summary_readiness.answerable else "FAILED",
+            "mode": user_mode,
+            "durationMs": readiness_duration,
+            "timestamp": int(time.time() * 1000)
+        })
+        yield sse_event({"type": "agent_finish", "step": readiness_step})
+        yield sse_event({"type": "document_readiness_result", "readiness": readiness_dict, "answerability": readiness_dict})
+        yield sse_event({"type": "answerability_result", "answerability": readiness_dict})
+
+        if not summary_readiness.answerable:
+            yield sse_event({"type": "text_delta", "delta": summary_readiness.reason, "content": summary_readiness.reason})
             result = {
                 "question": question,
-                "answer": summary_answerability.reason,
+                "answer": summary_readiness.reason,
                 "sources": [],
                 "steps": steps,
                 "totalDurationMs": tracker.total_duration_ms(),
                 "plan": {"queryType": "document_summary"},
-                "confidence": {"score": 0.0, "sufficient": False, "reason": summary_answerability.reason},
-                "answerability": answerability_dict,
+                "confidence": {"score": 0.0, "sufficient": False, "reason": summary_readiness.reason},
+                "readiness": readiness_dict,
+                "answerability": readiness_dict,
                 "verdict": "not_answerable",
                 "telemetry": tracker.to_dict()
             }
             yield sse_event({"type": "pipeline_complete", "result": result})
             return
-
-        yield sse_event({"type": "answerability_result", "answerability": answerability_dict})
 
         # Summary Cache Check (Specification Section 11 & Pre-Execution Correction 4)
         doc_hash = target_entry.get("hash") or "default_hash" if target_entry else "default_hash"
@@ -543,12 +606,20 @@ async def run_rag_pipeline(
         async def progress_cb(evt: Dict[str, Any]):
             await progress_queue.put(evt)
 
+        pages_override = None
+        try:
+            from backend.services.guest_session_service import guest_session_service
+            pages_override = guest_session_service.get_document_pages(user_id, target_doc_id)
+        except Exception:
+            pass
+
         summarize_task = asyncio.create_task(
             hierarchical_summarize_document(
                 doc_id=target_doc_id,
                 doc_meta=target_entry or {},
                 question=question,
-                on_progress=progress_cb
+                on_progress=progress_cb,
+                pages_override=pages_override
             )
         )
         while not summarize_task.done() or not progress_queue.empty():
@@ -594,7 +665,8 @@ async def run_rag_pipeline(
             "totalDurationMs": tracker.total_duration_ms(),
             "plan": {"queryType": "document_summary"},
             "confidence": {"score": 0.98, "sufficient": True, "reason": "Complete document hierarchical summarization"},
-            "answerability": answerability_dict,
+            "readiness": readiness_dict,
+            "answerability": readiness_dict,
             "documentCoverage": summary_result.get("coverage", {}),
             "telemetry": tracker.to_dict()
         }
@@ -656,18 +728,30 @@ async def run_rag_pipeline(
 
     formatted_sources = []
     for idx, c in enumerate(raw_candidates, start=1):
+        orig_fn = c.get("originalFilename") or c.get("original_filename") or c.get("source_filename") or c.get("documentTitle") or target_filename or "document.txt"
+        doc_ext = Path(orig_fn).suffix.lower()
+        is_pdf = (doc_ext == ".pdf")
+        p_num = c.get("page_start") if is_pdf else None
+        if p_num is None and is_pdf:
+            p_num = c.get("pageNumber") or c.get("page_number") or 1
+
+        p_start = c.get("page_start") if is_pdf else None
+        p_end = c.get("page_end") if is_pdf else None
+        p_range = c.get("pageRange") if is_pdf else None
+
         formatted_sources.append({
             "chunkId": c.get("id") or c.get("chunk_id", f"chunk-{idx}"),
             "chunk_id": c.get("id") or c.get("chunk_id", f"chunk-{idx}"),
             "documentId": c.get("documentId") or c.get("document_id", "doc-unknown"),
             "document_id": c.get("documentId") or c.get("document_id", "doc-unknown"),
-            "documentTitle": c.get("originalFilename") or c.get("original_filename") or c.get("documentTitle") or target_filename or "Research Document",
-            "filename": c.get("originalFilename") or c.get("original_filename") or c.get("filename") or target_filename or "document.pdf",
-            "originalFilename": c.get("originalFilename") or c.get("original_filename") or target_filename or "document.pdf",
-            "original_filename": c.get("originalFilename") or c.get("original_filename") or target_filename or "document.pdf",
+            "documentTitle": orig_fn,
+            "filename": orig_fn,
+            "originalFilename": orig_fn,
+            "original_filename": orig_fn,
+            "format": doc_ext.lstrip(".") if doc_ext else ("pdf" if is_pdf else "txt"),
             "authors": c.get("authors", "Uploaded Document" if target_doc_id else "Vaswani et al."),
             "year": c.get("year", 2026 if target_doc_id else 2020),
-            "source": c.get("source", target_filename or "Research Corpus"),
+            "source": c.get("source", orig_fn),
             "chunkIndex": c.get("index", idx),
             "chunk_index": c.get("index", idx),
             "sourceIndex": idx,
@@ -676,11 +760,13 @@ async def run_rag_pipeline(
             "text": c.get("content") or c.get("text", ""),
             "score": round(float(c.get("score", 0.85)), 4),
             "retrieval_score": round(float(c.get("score", 0.85)), 4),
-            "pageNumber": c.get("pageNumber", 1),
-            "page_number": c.get("pageNumber", 1),
-            "page_start": c.get("page_start", c.get("pageNumber", 1)),
-            "page_end": c.get("page_end", c.get("pageNumber", 1)),
-            "section": c.get("section", c.get("documentTitle", "Technical Section")),
+            "pageNumber": p_num,
+            "page_number": p_num,
+            "page_start": p_start,
+            "page_end": p_end,
+            "pageRange": p_range,
+            "source_location": c.get("source_location") or (f"Section: {c.get('section')}" if c.get("section") else None),
+            "section": c.get("section", orig_fn),
             "ownerId": c.get("ownerId", user_id),
             "owner_id": c.get("ownerId", user_id)
         })

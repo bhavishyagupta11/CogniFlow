@@ -4,8 +4,10 @@ export const useUIStore = create((set) => ({
     setArchOpen: (archOpen) => set({ archOpen }),
     kbOpen: false,
     setKbOpen: (kbOpen) => set({ kbOpen }),
+    activeDocument: null,
+    setActiveDocument: (activeDocument) => set({ activeDocument, pdfSource: activeDocument }),
     pdfSource: null,
-    setPdfSource: (pdfSource) => set({ pdfSource }),
+    setPdfSource: (pdfSource) => set({ pdfSource, activeDocument: pdfSource }),
     traceOpen: true,
     setTraceOpen: (traceOpen) => set({ traceOpen }),
 }));

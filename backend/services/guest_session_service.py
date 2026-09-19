@@ -309,6 +309,20 @@ class GuestSessionService:
                     return s.documents[doc_id]
             return None
 
+    def get_document_pages(self, session_id: str, doc_id: str) -> Optional[List[Dict[str, Any]]]:
+        with self._lock:
+            session = self.get_session(session_id)
+            if not session or doc_id not in session.documents:
+                return None
+            return session.documents[doc_id].get("pages")
+
+    def find_document_pages_any_session(self, doc_id: str) -> Optional[List[Dict[str, Any]]]:
+        with self._lock:
+            for s in self._sessions.values():
+                if not s.migrated and doc_id in s.documents:
+                    return s.documents[doc_id].get("pages")
+            return None
+
     def cleanup_expired_sessions(self, max_age_seconds: int = 7200) -> int:
         now = time.time()
         expired_ids = []

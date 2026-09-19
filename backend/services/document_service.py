@@ -14,13 +14,17 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple, Callable
 
 from backend.config import MANIFEST_PATH, UPLOADS_DIR, EXTRACTED_DIR
+from backend.rag.extractor import (
+    extract_document_content,
+    sniff_document_type,
+    PDFPasswordRequiredError,
+    PDFIncorrectPasswordError,
+    UnsupportedFormatError,
+    ExtractionError
+)
 from backend.rag.chunker import (
-    extract_text_from_pdf,
-    extract_text_from_pdf_with_unlocked_bytes,
     chunk_text,
     semantic_chunk_document,
-    PDFPasswordRequiredError,
-    PDFIncorrectPasswordError
 )
 from backend.rag.vector_store import vector_store
 
@@ -133,14 +137,27 @@ async def ingest_file(
         safe_filename = "document.pdf"
     
     ext = Path(safe_filename).suffix.lower()
-    allowed_exts = [".pdf", ".txt", ".md", ".json"]
+    allowed_exts = [".pdf", ".docx", ".txt", ".md"]
+    if ext == ".doc":
+        return {
+            "ok": False,
+            "status": 400,
+            "error": {
+                "code": "UNSUPPORTED_FORMAT",
+                "message": "Legacy binary .doc files are not supported. Please save or convert your document to modern .docx format before uploading.",
+                "filename": safe_filename,
+                "field": "file"
+            }
+        }
     if ext not in allowed_exts:
         return {
             "ok": False,
             "status": 400,
             "error": {
                 "code": "UNSUPPORTED_FORMAT",
-                "message": f"File extension '{ext}' is not supported. Please upload PDF, TXT, or MD files."
+                "message": f"File extension '{ext}' is not supported. Supported formats: .pdf, .docx, .txt, .md.",
+                "filename": safe_filename,
+                "field": "file"
             }
         }
 
@@ -152,7 +169,9 @@ async def ingest_file(
             "status": 413,
             "error": {
                 "code": "FILE_TOO_LARGE",
-                "message": f"File size ({len(file_bytes)} bytes) exceeds the 25MB maximum limit."
+                "message": f"File size ({len(file_bytes)} bytes) exceeds the 25MB maximum limit.",
+                "filename": safe_filename,
+                "field": "file"
             }
         }
 
@@ -162,7 +181,9 @@ async def ingest_file(
             "status": 400,
             "error": {
                 "code": "EMPTY_FILE",
-                "message": "Uploaded file is 0 bytes."
+                "message": "Uploaded file is 0 bytes.",
+                "filename": safe_filename,
+                "field": "file"
             }
         }
 
@@ -188,7 +209,7 @@ async def ingest_file(
         existing = next((d for d in session_docs if d.get("hash") == file_hash), None)
 
     if existing:
-        existing_filename = existing.get("originalFilename") or existing.get("original_filename") or existing.get("filename")
+        existing_filename = existing.get("originalFilename") or existing.get("original_filename") or existing.get("filename") or "document"
         if existing_filename and existing_filename.strip().lower() != safe_filename.strip().lower():
             dup_msg = f"This file has already been uploaded as '{existing_filename}'."
         else:
@@ -200,59 +221,67 @@ async def ingest_file(
                 "code": "DUPLICATE",
                 "message": dup_msg,
                 "existingId": existing.get("id") or existing.get("document_id"),
-                "existingFilename": existing_filename
+                "existingFilename": existing_filename,
+                "filename": safe_filename,
+                "field": "file"
             }
         }
 
     # 4. Extract text & validate password BEFORE saving any files or DB records
     pages: List[Dict[str, Any]] = []
     unlocked_bytes = file_bytes
-    if ext == ".pdf":
-        try:
-            pages, unlocked_bytes = extract_text_from_pdf_with_unlocked_bytes(file_bytes, password=password)
-        except PDFPasswordRequiredError as e:
-            return {
-                "ok": False,
-                "status": 401,
-                "error": {
-                    "code": "PASSWORD_REQUIRED",
-                    "message": str(e)
-                }
+    try:
+        pages, unlocked_bytes = extract_document_content(
+            file_bytes=file_bytes,
+            filename=safe_filename,
+            mime_type=mime_type,
+            password=password
+        )
+    except PDFPasswordRequiredError as e:
+        return {
+            "ok": False,
+            "status": 401,
+            "error": {
+                "code": "PASSWORD_REQUIRED",
+                "message": str(e),
+                "filename": safe_filename,
+                "field": "password"
             }
-        except PDFIncorrectPasswordError as e:
-            return {
-                "ok": False,
-                "status": 401,
-                "error": {
-                    "code": "INCORRECT_PASSWORD",
-                    "message": str(e)
-                }
+        }
+    except PDFIncorrectPasswordError as e:
+        return {
+            "ok": False,
+            "status": 401,
+            "error": {
+                "code": "INCORRECT_PASSWORD",
+                "message": str(e),
+                "filename": safe_filename,
+                "field": "password"
             }
-        except Exception as e:
-            print(f"[DocumentService] Error extracting PDF {safe_filename}: {e}")
-            return {
-                "ok": False,
-                "status": 422,
-                "error": {
-                    "code": "EXTRACTION_FAILED",
-                    "message": f"Failed to extract text from PDF: {e}"
-                }
+        }
+    except UnsupportedFormatError as e:
+        return {
+            "ok": False,
+            "status": 400,
+            "error": {
+                "code": "UNSUPPORTED_FORMAT",
+                "message": str(e),
+                "filename": safe_filename,
+                "field": "file"
             }
-    else:
-        # Plain text / Markdown
-        try:
-            text = file_bytes.decode("utf-8", errors="replace")
-            pages = [{"pageNumber": 1, "text": text}]
-        except Exception as e:
-            print(f"[DocumentService] Error decoding text {safe_filename}: {e}")
-            return {
-                "ok": False,
-                "status": 422,
-                "error": {
-                    "code": "EXTRACTION_FAILED",
-                    "message": f"Failed to decode text file: {e}"
-                }
+        }
+    except Exception as e:
+        logger.error(f"[DocumentService] Error extracting {safe_filename}: {e}")
+        return {
+            "ok": False,
+            "status": 422,
+            "error": {
+                "code": "EXTRACTION_FAILED",
+                "message": f"Failed to extract document content: {str(e)}",
+                "filename": safe_filename,
+                "field": "file"
             }
+        }
 
     # 5. Validate usable text extracted - detect image-only/scanned PDF (low-text condition)
     total_text_len = sum(len(p.get("text", "").strip()) for p in pages)
@@ -262,7 +291,9 @@ async def ingest_file(
             "status": 422,
             "error": {
                 "code": "OCR_REQUIRED",
-                "message": "PDF uploaded, but no selectable text was found. OCR is required."
+                "message": "PDF uploaded, but no selectable text was found. OCR is required.",
+                "filename": safe_filename,
+                "field": "file"
             }
         }
 
@@ -272,7 +303,9 @@ async def ingest_file(
             "status": 422,
             "error": {
                 "code": "EMPTY_OR_UNREADABLE",
-                "message": "Document contains no readable text or failed text extraction. It may be image-only or empty."
+                "message": "Document contains no readable text or failed text extraction. It may be image-only or empty.",
+                "filename": safe_filename,
+                "field": "file"
             }
         }
 
@@ -308,19 +341,34 @@ async def ingest_file(
         "storage_filename": stored_filename,
         "originalFilename": safe_filename,
         "original_filename": safe_filename,
-        "mimeType": mime_type or ("application/pdf" if ext == ".pdf" else "text/plain"),
-        "mime_type": mime_type or ("application/pdf" if ext == ".pdf" else "text/plain"),
+        "mimeType": mime_type or (
+            "application/pdf" if ext == ".pdf"
+            else "application/vnd.openxmlformats-officedocument.wordprocessingml.document" if ext == ".docx"
+            else "text/markdown" if ext in [".md", ".markdown"]
+            else "text/plain"
+        ),
+        "mime_type": mime_type or (
+            "application/pdf" if ext == ".pdf"
+            else "application/vnd.openxmlformats-officedocument.wordprocessingml.document" if ext == ".docx"
+            else "text/markdown" if ext in [".md", ".markdown"]
+            else "text/plain"
+        ),
+        "extension": ext,
         "size": len(file_bytes),
+        "sizeBytes": len(file_bytes),
         "size_bytes": len(file_bytes),
         "uploadedAt": now_iso,
         "created_at": now_iso,
+        "createdAt": now_iso,
         "lastModified": now_iso,
         "updated_at": now_iso,
-        "pageCount": len(pages),
-        "page_count": len(pages),
+        "pageCount": len(pages) if ext == ".pdf" else max(len(pages), 1),
+        "page_count": len(pages) if ext == ".pdf" else max(len(pages), 1),
+        "characterCount": total_text_len,
         "chunkCount": total_chunks,
         "chunk_count": total_chunks,
         "chunkIds": chunk_ids,
+        "status": "completed",
         "processingStatus": "completed",
         "processing_status": "completed",
         "indexStatus": "indexed",
@@ -331,6 +379,7 @@ async def ingest_file(
         "tenantId": owner_id,
         "tenant_id": owner_id,
         "hash": file_hash,
+        "fileHash": file_hash,
         "file_hash": file_hash,
         "charCount": total_text_len,
         "char_count": total_text_len,
@@ -496,7 +545,8 @@ def delete_document(
     caller_id: str = "dev-user",
     is_authenticated: bool = False,
     is_admin: bool = False,
-    db_hook: Optional[Callable[[str], None]] = None
+    db_hook: Optional[Callable[[str], None]] = None,
+    owner_id: Optional[str] = None
 ) -> DeleteResult:
     """
     Deletes a document from disk, manifest, and vector store with strict authorization
@@ -523,6 +573,9 @@ def delete_document(
         - Unauthenticated caller CANNOT delete registered user documents, public documents, or unowned documents.
         - Returns DeleteResult(False, "GUEST_UNAUTHORIZED") or DeleteResult(False, "CANNOT_DELETE_PUBLIC_DOC").
     """
+    if owner_id is not None:
+        caller_id = owner_id
+        is_authenticated = True
     # Check GuestSessionService first if caller is unauthenticated
     if not is_authenticated:
         from backend.services.guest_session_service import guest_session_service
@@ -803,14 +856,11 @@ def reindex_document(
     if not upload_path.exists():
         return {"ok": False, "status": 404, "error": f"File '{filename}' missing on disk."}
 
-    # Re-extract
+    # Re-extract using unified extractor
     safe_name = target.get("originalFilename") or target.get("original_filename") or filename
-    ext = Path(filename).suffix.lower()
-    if ext == ".pdf":
-        pages = extract_text_from_pdf(upload_path)
-    else:
-        text = upload_path.read_text(encoding="utf-8", errors="replace")
-        pages = [{"pageNumber": 1, "text": text}]
+    raw_bytes = upload_path.read_bytes()
+    mime = target.get("mimeType") or target.get("mime_type")
+    pages, _ = extract_document_content(raw_bytes, safe_name, mime_type=mime)
 
     # Update extracted JSON
     extracted_path = EXTRACTED_DIR / f"{doc_id}.json"

@@ -54,6 +54,15 @@ def reset_all_application_data():
                 cur.execute(f"DELETE FROM {table};")
                 print(f"  [OK] Cleared table: {table}")
 
+            # Purge test-only accounts while strictly preserving real production users
+            cur.execute("""
+                DELETE FROM users
+                WHERE email LIKE '%@test.com'
+                   OR email LIKE '%@ephemeral.test'
+                   OR email LIKE '%@cogniflow.test';
+            """)
+            print("  [OK] Purged test-generated accounts (production users preserved)")
+
     # 2. Clear Cloudflare R2 Storage Objects
     print("\n[2/5] Cleaning Cloudflare R2 storage objects...")
     if isinstance(storage_service, R2StorageService):

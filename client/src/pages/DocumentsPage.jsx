@@ -16,7 +16,7 @@ export function DocumentsPage() {
     const [selectedDoc, setSelectedDoc] = useState(null);
     const [docToDelete, setDocToDelete] = useState(null);
     const fileInputRef = useRef(null);
-    const setPdfSource = useUIStore((s) => s.setPdfSource);
+    const { setPdfSource, setActiveDocument } = useUIStore();
     const { attachSource, detachSource, attachedSources = [] } = useChatStore();
     const { data: documents = [], isLoading, refetch, isFetching } = useDocumentsQuery();
     const uploadMutation = useUploadDocumentMutation();
@@ -166,6 +166,21 @@ export function DocumentsPage() {
             </span>
         );
     };
+
+    const getFormatBadge = (doc) => {
+        const mime = (doc.mimeType || doc.mime_type || "").toLowerCase();
+        const name = (doc.originalFilename || doc.original_filename || "").toLowerCase();
+        if (mime === "application/pdf" || name.endsWith(".pdf")) {
+            return <span className="px-1.5 py-0.5 rounded-[2px] bg-rose-500/10 text-rose-500 border border-rose-500/20 font-mono text-[9px] font-bold">PDF</span>;
+        }
+        if (mime.includes("wordprocessingml") || mime.includes("officedocument") || name.endsWith(".docx")) {
+            return <span className="px-1.5 py-0.5 rounded-[2px] bg-blue-500/10 text-blue-500 border border-blue-500/20 font-mono text-[9px] font-bold">DOCX</span>;
+        }
+        if (mime.includes("markdown") || name.endsWith(".md") || name.endsWith(".markdown")) {
+            return <span className="px-1.5 py-0.5 rounded-[2px] bg-purple-500/10 text-purple-500 border border-purple-500/20 font-mono text-[9px] font-bold">MD</span>;
+        }
+        return <span className="px-1.5 py-0.5 rounded-[2px] bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-mono text-[9px] font-bold">TXT</span>;
+    };
     return (<div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full space-y-6">
       {/* Top summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -223,13 +238,13 @@ export function DocumentsPage() {
             : "border-[var(--panel-border)] bg-[var(--panel-inner)] hover:border-[var(--accent-amber)]/60"}`}>
             <UploadCloud className="h-9 w-9 text-[var(--accent-amber)] mb-3"/>
             <p className="font-mono text-xs font-bold uppercase tracking-wider text-[var(--text-primary)]">
-              DROP RESEARCH PAPERS OR PDF SOURCES HERE
+              DROP RESEARCH PAPERS OR DOCUMENT SOURCES HERE
             </p>
             <p className="font-mono text-[10px] text-[var(--text-muted)] mt-1 mb-4">
-              SUPPORTED FORMATS: PDF, TXT, MARKDOWN (UP TO 50MB)
+              SUPPORTED FORMATS: PDF, DOCX, TXT, MD (UP TO 50MB)
             </p>
 
-            <input type="file" ref={fileInputRef} className="hidden" multiple accept=".pdf,.txt,.md" onChange={(e) => {
+            <input type="file" ref={fileInputRef} className="hidden" multiple accept=".pdf,.docx,.txt,.md" onChange={(e) => {
             if (e.target.files) {
                 handleFiles(Array.from(e.target.files));
             }
@@ -296,12 +311,13 @@ export function DocumentsPage() {
                         <span className="truncate max-w-[200px] text-[var(--text-primary)] group-hover:text-[var(--accent-amber)] transition-colors" title={doc.originalFilename}>
                           {doc.originalFilename}
                         </span>
+                        {getFormatBadge(doc)}
                       </div>
                     </TableCell>
                     <TableCell>{getStatusBadge(doc.processingStatus)}</TableCell>
                     <TableCell>{getIndexBadge(doc.indexStatus, doc.processingStatus)}</TableCell>
                     <TableCell className="font-mono text-[var(--text-secondary)]">{doc.chunkCount || 0}</TableCell>
-                    <TableCell className="font-mono text-[var(--text-secondary)]">{doc.pageCount || 1}</TableCell>
+                    <TableCell className="font-mono text-[var(--text-secondary)]">{doc.pageCount ? `${doc.pageCount} pgs` : "—"}</TableCell>
                     <TableCell className="text-[var(--text-muted)]">
                       {(doc.size / 1024).toFixed(1)} KB
                     </TableCell>
@@ -344,22 +360,27 @@ export function DocumentsPage() {
                       <Button variant="ghost" size="sm" className="h-7 px-2 text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:bg-[var(--panel-bg)] rounded-[2px]" onClick={() => setSelectedDoc(doc)} title="Document Details">
                         <Info className="h-3.5 w-3.5"/>
                       </Button>
-                      {doc.mimeType === "application/pdf" && (
-                        <Button variant="ghost" size="sm" className="h-7 px-2 text-[var(--accent-amber)] hover:text-[var(--accent-amber-light)] hover:bg-[var(--accent-amber)]/10 rounded-[2px]" onClick={() => setPdfSource({
-                            chunkId: "",
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-[var(--accent-amber)] hover:text-[var(--accent-amber-light)] hover:bg-[var(--accent-amber)]/10 rounded-[2px]"
+                        onClick={() => {
+                          const docPayload = {
+                            id: doc.id,
                             documentId: doc.id,
                             documentTitle: doc.originalFilename,
-                            authors: "",
-                            year: 2026,
-                            source: doc.originalFilename,
-                            chunkIndex: 0,
-                            chunkContent: "",
-                            score: 1,
+                            originalFilename: doc.originalFilename,
+                            mimeType: doc.mimeType,
                             pageNumber: 1,
-                        })} title="View PDF">
-                          <ExternalLink className="h-3.5 w-3.5"/>
-                        </Button>
-                      )}
+                            source: doc.originalFilename,
+                          };
+                          if (setActiveDocument) setActiveDocument(docPayload);
+                          else setPdfSource(docPayload);
+                        }}
+                        title={`View ${doc.originalFilename}`}
+                      >
+                        <ExternalLink className="h-3.5 w-3.5"/>
+                      </Button>
                       <Button variant="ghost" size="sm" className="h-7 px-2 text-[var(--accent-cyan)] hover:text-[var(--accent-cyan-light)] hover:bg-cyan-500/10 rounded-[2px]" onClick={() => handleReindex(doc)} disabled={reindexingId === doc.id} title="Re-index Document">
                         <RefreshCw className={`h-3.5 w-3.5 ${reindexingId === doc.id ? "animate-spin text-[var(--accent-cyan)]" : ""}`}/>
                       </Button>
@@ -415,7 +436,11 @@ export function DocumentsPage() {
               </div>
               <div className="flex justify-between">
                 <span className="text-[var(--text-muted)]">PAGES EXTRACTED:</span>
-                <span className="text-[var(--text-primary)]">{selectedDoc.pageCount || 1} pages</span>
+                <span className="text-[var(--text-primary)]">
+                  {selectedDoc.pageCount && (selectedDoc.mimeType === "application/pdf" || (selectedDoc.originalFilename || "").toLowerCase().endsWith(".pdf"))
+                    ? `${selectedDoc.pageCount} pages`
+                    : "N/A (Structured Document)"}
+                </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-[var(--text-muted)]">TEXT CHUNKS:</span>
@@ -461,12 +486,15 @@ export function DocumentsPage() {
                 </Button>
               );
             })()}
-            {selectedDoc?.mimeType === "application/pdf" && (
+            {selectedDoc && (
               <Button size="sm" variant="outline" className="font-mono text-xs border-[var(--accent-amber)]/40 text-[var(--accent-amber)] hover:bg-[var(--accent-amber)]/10" onClick={() => {
-                setPdfSource({
-                  chunkId: "",
+                const docPayload = {
+                  id: selectedDoc.id,
                   documentId: selectedDoc.id,
                   documentTitle: selectedDoc.originalFilename,
+                  originalFilename: selectedDoc.originalFilename,
+                  mimeType: selectedDoc.mimeType,
+                  chunkId: "",
                   authors: "",
                   year: 2026,
                   source: selectedDoc.originalFilename,
@@ -474,11 +502,13 @@ export function DocumentsPage() {
                   chunkContent: "",
                   score: 1,
                   pageNumber: 1,
-                });
+                };
+                if (setActiveDocument) setActiveDocument(docPayload);
+                else setPdfSource(docPayload);
                 setSelectedDoc(null);
               }}>
                 <ExternalLink className="h-3.5 w-3.5 mr-1"/>
-                OPEN PDF VIEWER
+                OPEN VIEWER
               </Button>
             )}
             {selectedDoc && (

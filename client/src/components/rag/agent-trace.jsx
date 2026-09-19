@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 
 const STAGE_NUMBERS = {
   router: "01",
+  readiness: "02",
   retriever: "02",
   reranker: "03",
   rescorer: "03",
@@ -24,6 +25,7 @@ const STAGE_NUMBERS = {
 
 const AGENT_LABELS = {
   router: "ROUTER",
+  readiness: "DOCUMENT READINESS CHECK",
   retriever: "RETRIEVER",
   reranker: "HEURISTIC RESCORER",
   rescorer: "HEURISTIC RESCORER",
@@ -116,6 +118,8 @@ const StepCard = memo(function StepCard({ step, index, devMode }) {
   let subtitle = "";
   if (isSkipped) {
     subtitle = step.input?.skipReason || step.input?.reason || "Skipped by pipeline policy";
+  } else if (step.agent === "readiness" && step.output) {
+    subtitle = step.output.ready ? "Document target validated & ready" : (step.output.reason || "Readiness validation completed");
   } else if (step.agent === "retriever" && step.output) {
     const count = step.output.count ?? step.output.candidates?.length ?? 0;
     const mmr = step.output.mmrUsed ? " · MMR applied" : "";
@@ -249,6 +253,16 @@ function StepDetails({ step, devMode }) {
               })}
             </div>
           )}
+        </div>
+      );
+    }
+    case "readiness": {
+      return (
+        <div className="space-y-1.5 font-mono">
+          <DetailRow label="Document Target" value={step.input?.filename || step.input?.targetDocId || "Target"} />
+          <DetailRow label="Document Format" value={step.input?.isPdf ? "PDF (Paginated)" : "Structured Document (Non-PDF)"} />
+          <DetailRow label="Readiness Status" value={step.output?.status || (step.output?.ready ? "ready" : "not_ready")} />
+          {step.output?.reason && <DetailRow label="Readiness Note" value={step.output.reason} />}
         </div>
       );
     }

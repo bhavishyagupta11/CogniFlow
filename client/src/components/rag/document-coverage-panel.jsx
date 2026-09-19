@@ -1,6 +1,6 @@
 "use client";
 import { memo } from "react";
-import { ShieldCheck } from "lucide-react";
+import { ShieldCheck, CheckCircle2 } from "lucide-react";
 
 export const DocumentCoveragePanel = memo(function DocumentCoveragePanel({ coverage, className }) {
   if (!coverage) return null;

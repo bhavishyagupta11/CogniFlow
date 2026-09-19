@@ -8,9 +8,10 @@ from pathlib import Path
 from fastapi import APIRouter, Header, HTTPException, UploadFile, File, Form, Response, Request, Query
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
-from backend.config import UPLOADS_DIR
+from backend.config import UPLOADS_DIR, EXTRACTED_DIR
 from backend.services.document_service import get_manifest, ingest_file, delete_document, reindex_document, inspect_document
 from backend.services.auth_service import resolve_caller_identity, get_optional_user
+from backend.rag.vector_store import vector_store
 
 router = APIRouter(tags=["documents"])
 
@@ -64,7 +65,57 @@ async def list_documents(
     return guest_docs
 
 
+@router.get("/api/documents/{doc_id}")
+async def get_document_by_id(
+    doc_id: str,
+    response: Response,
+    authorization: Optional[str] = Header(None),
+    x_user_id: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None)
+):
+    """Retrieves metadata for a single document, enforcing tenant/session isolation."""
+    from backend.services.db_service import db_service
+    from backend.services.guest_session_service import guest_session_service
+
+    identity = await resolve_caller_identity(authorization=authorization, x_user_id=x_user_id, x_session_id=x_session_id)
+    if identity.session_id:
+        response.headers["X-Session-ID"] = identity.session_id
+
+    # 1. Check guest session
+    guest_doc = guest_session_service.get_document(identity.user_id, doc_id)
+    if guest_doc:
+        d = dict(guest_doc)
+        d.pop("raw_bytes", None)
+        return d
+
+    # 2. Check persistent DB / manifest
+    target = db_service.get_document(doc_id)
+    if not target:
+        manifest = get_manifest()
+        target = next((m for m in manifest if m.get("id") == doc_id or m.get("document_id") == doc_id), None)
+        if not target:
+            raise HTTPException(status_code=404, detail=f"Document '{doc_id}' not found.")
+
+    target_owner = target.get("ownerId") or target.get("owner_id")
+    target_workspace = target.get("workspace") or target.get("workspace_id")
+
+    if identity.is_admin or identity.user_id == "system":
+        allowed = True
+    elif target_owner in ["public", "system_public"]:
+        allowed = True
+    elif identity.is_authenticated:
+        allowed = (target_owner == identity.user_id)
+    else:
+        allowed = (target_owner in ["dev-user", "guest", "user_default"] or target_workspace in ["guest", "dev"])
+
+    if not allowed:
+        raise HTTPException(status_code=403, detail=f"Forbidden: Not authorized to access document '{doc_id}'")
+
+    return target
+
+
 @router.post("/api/documents")
+@router.post("/api/documents/upload")
 async def upload_documents(
     response: Response,
     file: Union[UploadFile, List[UploadFile]] = File(...),
@@ -441,9 +492,17 @@ async def view_document_pdf(
         )
 
     safe_filename = target.get("originalFilename") or target.get("original_filename") or f"{doc_id}.pdf"
-    media_type = target.get("mimeType") or target.get("mime_type") or "application/pdf"
+    media_type = target.get("mimeType") or target.get("mime_type")
     if not media_type or media_type == "application/octet-stream":
-        media_type = "application/pdf" if safe_filename.endswith(".pdf") else "text/plain"
+        ext = Path(safe_filename).suffix.lower()
+        if ext == ".pdf":
+            media_type = "application/pdf"
+        elif ext == ".docx":
+            media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        elif ext in [".md", ".markdown"]:
+            media_type = "text/markdown; charset=utf-8"
+        else:
+            media_type = "text/plain; charset=utf-8"
 
     r2_upload_key = target.get("r2_upload_key") or f"uploads/{doc_id}/original"
     filename = target.get("filename") or f"{doc_id}.pdf"
@@ -471,17 +530,27 @@ async def view_document_pdf(
         pass
 
     # 6. Local filesystem fallback
-    safe_disk_name = Path(filename).name
-    pdf_path = (UPLOADS_DIR / safe_disk_name).resolve()
-    if pdf_path.is_relative_to(UPLOADS_DIR.resolve()) and pdf_path.exists():
-        content = pdf_path.read_bytes()
-        return create_byte_range_response(
-            content_bytes=content,
-            media_type=media_type,
-            safe_filename=safe_filename,
-            range_header=range_header,
-            session_id=identity.session_id
-        )
+    ext_suffix = Path(safe_filename).suffix.lower()
+    candidate_paths = [
+        UPLOADS_DIR / Path(filename).name,
+        UPLOADS_DIR / f"{doc_id}{ext_suffix}",
+        UPLOADS_DIR / f"{doc_id}.pdf",
+        UPLOADS_DIR / safe_filename
+    ]
+    for c_path in candidate_paths:
+        try:
+            resolved = c_path.resolve()
+            if resolved.is_relative_to(UPLOADS_DIR.resolve()) and resolved.exists():
+                content = resolved.read_bytes()
+                return create_byte_range_response(
+                    content_bytes=content,
+                    media_type=media_type,
+                    safe_filename=safe_filename,
+                    range_header=range_header,
+                    session_id=identity.session_id
+                )
+        except Exception:
+            continue
 
     raise HTTPException(status_code=404, detail="Binary document object not found in storage")
 
@@ -507,9 +576,83 @@ async def reindex_single_document(
     return JSONResponse(status_code=status_code, content=res)
 
 
-@router.get("/api/documents/{doc_id}/inspect")
-async def inspect_single_document(doc_id: str):
-    res = inspect_document(doc_id)
-    status_code = 200 if res.get("valid") else 404
-    return JSONResponse(status_code=status_code, content=res)
+@router.get("/api/documents/{doc_id}/content")
+async def get_document_content(
+    doc_id: str,
+    response: Response,
+    authorization: Optional[str] = Header(None),
+    x_user_id: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None)
+):
+    """Returns normalized extracted sections and full text for in-app viewing (PDF, DOCX, TXT, MD)."""
+    import json
+    from backend.services.db_service import db_service
+    from backend.services.guest_session_service import guest_session_service
+
+    identity = await resolve_caller_identity(authorization=authorization, x_user_id=x_user_id, x_session_id=x_session_id)
+    if identity.session_id:
+        response.headers["X-Session-ID"] = identity.session_id
+
+    # 1. Guest session documents
+    guest_doc = guest_session_service.get_document(identity.user_id, doc_id)
+    if guest_doc:
+        pages = guest_session_service.get_document_pages(identity.user_id, doc_id) or []
+        orig_name = guest_doc.get("originalFilename") or guest_doc.get("original_filename") or doc_id
+        mime = guest_doc.get("mimeType") or guest_doc.get("mime_type") or "text/plain"
+        ext = Path(orig_name).suffix.lower().lstrip(".")
+        fmt = "pdf" if ext == "pdf" else ("docx" if ext == "docx" else ("md" if ext in ["md", "markdown"] else "txt"))
+        return {
+            "id": doc_id,
+            "document_id": doc_id,
+            "originalFilename": orig_name,
+            "mimeType": mime,
+            "format": fmt,
+            "sections": pages,
+            "text": "\n\n".join(p.get("text", "") for p in pages)
+        }
+
+    # 2. Persistent documents
+    target = db_service.get_document(doc_id)
+    if not target:
+        manifest = get_manifest()
+        target = next((m for m in manifest if m.get("id") == doc_id or m.get("document_id") == doc_id), None)
+        if not target:
+            raise HTTPException(status_code=404, detail=f"Document '{doc_id}' not found.")
+
+    target_owner = target.get("ownerId") or target.get("owner_id")
+    if not (
+        identity.is_admin
+        or identity.user_id == "system"
+        or target_owner in ["public", "system_public"]
+        or (identity.is_authenticated and target_owner == identity.user_id)
+        or (not identity.is_authenticated and target_owner in ["dev-user", "guest"])
+    ):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    pages = []
+    extracted_path = EXTRACTED_DIR / f"{doc_id}.json"
+    if extracted_path.exists():
+        try:
+            pages = json.loads(extracted_path.read_text(encoding="utf-8"))
+        except Exception:
+            pages = []
+
+    if not pages:
+        chunks = [c for c in vector_store.chunks if c.get("document_id") == doc_id or c.get("documentId") == doc_id]
+        if chunks:
+            pages = [{"page_number": c.get("page_number"), "section": c.get("section", ""), "text": c.get("content", "")} for c in chunks]
+
+    orig_name = target.get("originalFilename") or target.get("original_filename") or doc_id
+    mime = target.get("mimeType") or target.get("mime_type") or "text/plain"
+    ext = Path(orig_name).suffix.lower().lstrip(".")
+    fmt = "pdf" if ext == "pdf" else ("docx" if ext == "docx" else ("md" if ext in ["md", "markdown"] else "txt"))
+    return {
+        "id": doc_id,
+        "document_id": doc_id,
+        "originalFilename": orig_name,
+        "mimeType": mime,
+        "format": fmt,
+        "sections": pages,
+        "text": "\n\n".join(p.get("text", "") for p in pages)
+    }
 

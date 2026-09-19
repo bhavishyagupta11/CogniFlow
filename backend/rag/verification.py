@@ -130,10 +130,13 @@ def validate_summary_citations(
         if not is_correct_doc:
             issues.append(f"Citation [{badge}] document ID mismatch: expected {target_doc_id}, found {c_doc_id}")
 
-        # Check 2: Page bounds
-        is_page_valid = (1 <= p_start <= total_pages) and (p_start <= p_end <= total_pages)
-        if not is_page_valid:
-            issues.append(f"Citation [{badge}] page bounds invalid: {p_range} outside [1, {total_pages}]")
+        # Check 2: Page bounds (for paginated documents)
+        if p_start is not None and total_pages > 1:
+            is_page_valid = (1 <= p_start <= total_pages) and (p_start <= p_end <= total_pages)
+            if not is_page_valid:
+                issues.append(f"Citation [{badge}] page bounds invalid: {p_range} outside [1, {total_pages}]")
+        else:
+            is_page_valid = True
 
         # Check 3: Evidence completeness
         has_evidence = len(evidence.strip()) > 20

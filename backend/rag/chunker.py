@@ -170,17 +170,30 @@ def semantic_chunk_document(
     current_page_end: Optional[int] = None
     current_char_count = 0
 
-    def flush_chunk():
+    has_page_numbers = any(
+        (p.get("pageNumber") is not None or p.get("page_number") is not None or p.get("page") is not None)
+        for p in pages
+    )
+
+    def flush_chunk(is_final: bool = False):
         nonlocal chunk_counter, current_paragraphs, current_page_start, current_page_end, current_char_count
         if not current_paragraphs:
             return
 
         combined_text = "\n\n".join(current_paragraphs).strip()
-        if len(combined_text) >= min_chunk_size:
-            p_start = current_page_start if current_page_start is not None else 1
-            p_end = current_page_end if current_page_end is not None else p_start
+        if len(combined_text) >= min_chunk_size or (is_final and len(combined_text) > 0):
             c_id = f"{document_id}#chunk-{chunk_counter}"
-            source_loc = f"p. {p_start}" if p_start == p_end else f"pp. {p_start}–{p_end}"
+
+            if has_page_numbers:
+                p_start = current_page_start if current_page_start is not None else 1
+                p_end = current_page_end if current_page_end is not None else p_start
+                source_loc = f"p. {p_start}" if p_start == p_end else f"pp. {p_start}–{p_end}"
+                page_rng = f"{p_start}–{p_end}"
+            else:
+                p_start = None
+                p_end = None
+                source_loc = f"Section: {current_section}" if current_section else doc_name
+                page_rng = None
 
             chunk_record = {
                 "chunk_id": c_id,
@@ -189,14 +202,15 @@ def semantic_chunk_document(
                 "documentId": document_id,
                 "document_name": doc_name,
                 "documentTitle": doc_name,
+                "source_filename": doc_name,
                 "document_version": document_version,
                 "section": current_section,
                 "subsection": current_subsection or current_section,
                 "page_start": p_start,
                 "page_end": p_end,
-                "pageNumber": p_start,
+                "pageNumber": p_start if p_start is not None else 1,
                 "page_number": p_start,
-                "pageRange": f"{p_start}–{p_end}",
+                "pageRange": page_rng,
                 "source_location": source_loc,
                 "text": combined_text,
                 "content": combined_text,
@@ -214,7 +228,10 @@ def semantic_chunk_document(
         current_char_count = 0
 
     for p in pages:
-        p_num = p.get("pageNumber", 1)
+        p_num = p.get("pageNumber") if p.get("pageNumber") is not None else (p.get("page_number") if p.get("page_number") is not None else p.get("page"))
+        if p.get("section") and p["section"] != doc_name:
+            current_section = p["section"]
+
         raw_text = p.get("text", "")
         if not raw_text.strip():
             continue
@@ -227,6 +244,11 @@ def semantic_chunk_document(
             para = para.strip()
             if not para:
                 continue
+
+            if current_page_start is None and p_num is not None:
+                current_page_start = p_num
+            if p_num is not None:
+                current_page_end = p_num
 
             lines = para.split("\n")
             first_line = lines[0].strip()
@@ -278,7 +300,7 @@ def semantic_chunk_document(
                 flush_chunk()
 
     # Flush any remaining paragraphs
-    flush_chunk()
+    flush_chunk(is_final=True)
 
     return chunks
 

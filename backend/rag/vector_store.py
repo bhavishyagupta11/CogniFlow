@@ -100,7 +100,9 @@ class VectorStore:
                         "document_name": orig_name,
                         "originalFilename": orig_name,
                         "original_filename": orig_name,
-                        "filename": f"{doc_id}.pdf",
+                        "filename": row.get("storage_filename") or row.get("filename") or orig_name,
+                        "storage_filename": row.get("storage_filename") or row.get("filename") or orig_name,
+                        "mime_type": row.get("mime_type", "application/pdf"),
                         "page_number": row.get("page_number", 1),
                         "pageNumber": row.get("page_number", 1),
                         "page_start": row.get("page_start", 1),
@@ -784,21 +786,24 @@ class VectorStore:
         document_id: Optional[str] = None,
         scope: Optional[str] = None,
         strategy: Optional[str] = None,
-        allowed_document_ids: Optional[List[str]] = None
+        allowed_document_ids: Optional[List[str]] = None,
+        top_k: Optional[int] = None,
+        **kwargs
     ) -> List[Dict[str, Any]]:
         """
         Authoritative Retrieval Entry Point.
         Dispatches to hybrid, lexical, LSA semantic, or neural dense search according to strategy parameter or config.
         """
+        effective_k = top_k if top_k is not None else k
         from backend.config import RETRIEVAL_STRATEGY
         strat = (strategy or RETRIEVAL_STRATEGY or "hybrid").lower().strip()
         if strat == "lexical":
-            return self.search_lexical(query, k, owner_id=owner_id, document_id=document_id, scope=scope, allowed_document_ids=allowed_document_ids)
+            return self.search_lexical(query, effective_k, owner_id=owner_id, document_id=document_id, scope=scope, allowed_document_ids=allowed_document_ids)
         elif strat in ["neural_semantic", "neural", "dense"]:
-            return self.search_neural_semantic(query, k, owner_id=owner_id, document_id=document_id, scope=scope, allowed_document_ids=allowed_document_ids)
+            return self.search_neural_semantic(query, effective_k, owner_id=owner_id, document_id=document_id, scope=scope, allowed_document_ids=allowed_document_ids)
         elif strat in ["semantic", "lsa_semantic", "lsa"]:
-            return self.search_semantic(query, k, owner_id=owner_id, document_id=document_id, scope=scope, allowed_document_ids=allowed_document_ids)
-        return self.search_hybrid(query, k, owner_id=owner_id, document_id=document_id, scope=scope, allowed_document_ids=allowed_document_ids)
+            return self.search_semantic(query, effective_k, owner_id=owner_id, document_id=document_id, scope=scope, allowed_document_ids=allowed_document_ids)
+        return self.search_hybrid(query, effective_k, owner_id=owner_id, document_id=document_id, scope=scope, allowed_document_ids=allowed_document_ids)
 
 
 class IndexManager(VectorStore):

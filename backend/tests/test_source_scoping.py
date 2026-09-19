@@ -47,20 +47,27 @@ def get_auth_token():
 
 
 def upload_content_doc(owner_id: str, filename: str, content: str):
-    import asyncio
+    import io
     unique_suffix = uuid.uuid4().hex[:6]
     unique_filename = f"{unique_suffix}_{filename}"
     unique_content = f"{content}\n\n<!-- nonce: {uuid.uuid4().hex} -->"
-    res = asyncio.run(ingest_file(
-        file_bytes=unique_content.encode("utf-8"),
-        filename=unique_filename,
-        mime_type="text/plain",
-        owner_id=owner_id
-    ))
-    if not res.get("ok") and res.get("error", {}).get("existingId"):
-        return res["error"]["existingId"]
-    assert res.get("ok"), f"Failed to ingest test doc: {res}"
-    return res["document"]["id"]
+    token = create_access_token({
+        "sub": owner_id,
+        "email": f"{owner_id}@cogniflow.test",
+        "role": "user"
+    })
+    resp = client.post(
+        "/api/documents/upload",
+        files={"file": (unique_filename, io.BytesIO(unique_content.encode("utf-8")), "text/plain")},
+        headers={"Authorization": f"Bearer {token}"}
+    )
+    if resp.status_code == 409:
+        err = resp.json().get("error", {})
+        return err.get("existingId")
+    assert resp.status_code in [200, 201], f"Failed to upload test doc: {resp.text}"
+    data = resp.json()
+    doc_id = (data.get("document") or {}).get("id") or (data.get("documents") or [{}])[0].get("id") or data.get("id")
+    return doc_id
 
 
 def parse_sse_events(response_text: str):

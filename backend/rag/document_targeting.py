@@ -94,6 +94,53 @@ def extract_potential_document_names(query: str) -> List[str]:
     return candidates
 
 
+def get_all_available_documents(owner_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Returns all accessible documents for the given owner across guest sessions,
+    persistent database records, and local manifest storage.
+    """
+    docs = []
+    seen_ids = set()
+
+    # 1. Check guest session documents first if owner_id provided
+    if owner_id:
+        try:
+            from backend.services.guest_session_service import guest_session_service
+            guest_docs = guest_session_service.get_documents(owner_id)
+            for d in guest_docs:
+                did = d.get("id") or d.get("document_id")
+                if did and did not in seen_ids:
+                    seen_ids.add(did)
+                    docs.append(d)
+        except Exception:
+            pass
+
+    # 2. Check persistent database documents
+    try:
+        from backend.services.db_service import db_service
+        is_auth = bool(owner_id and not owner_id.startswith("guest_"))
+        db_docs = db_service.list_documents(caller_id=owner_id, is_authenticated=is_auth)
+        for d in db_docs:
+            did = d.get("id") or d.get("document_id")
+            if did and did not in seen_ids:
+                seen_ids.add(did)
+                docs.append(d)
+    except Exception:
+        pass
+
+    # 3. Check persistent manifest documents
+    try:
+        for d in get_manifest():
+            did = d.get("id") or d.get("document_id")
+            if did and did not in seen_ids:
+                seen_ids.add(did)
+                docs.append(d)
+    except Exception:
+        pass
+
+    return docs
+
+
 def resolve_document_target(
     query: str,
     owner_id: str = "dev-user",
@@ -105,7 +152,7 @@ def resolve_document_target(
     Resolves query against the user's available documents.
     Enforces deterministic matching, ambiguity detection, and retrieval scoping.
     """
-    manifest = manifest_override if manifest_override is not None else get_manifest()
+    manifest = manifest_override if manifest_override is not None else get_all_available_documents(owner_id)
     
     # 0. If an explicit document ID was passed from request context
     if explicit_document_id:

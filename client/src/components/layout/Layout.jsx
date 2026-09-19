@@ -2,13 +2,13 @@ import React, { useState } from "react";
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { ArchitectureDialog } from "@/components/rag/architecture-dialog";
-import { PdfViewer } from "@/components/rag/pdf-viewer";
+import { DocumentViewer } from "@/components/rag/document-viewer";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { useUIStore } from "@/store/use-ui-store";
 import { Menu } from "lucide-react";
 
 export function Layout() {
-  const { archOpen, setArchOpen, pdfSource, setPdfSource } = useUIStore();
+  const { archOpen, setArchOpen, activeDocument, setActiveDocument, pdfSource, setPdfSource } = useUIStore();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
 
@@ -58,17 +58,31 @@ export function Layout() {
       {/* Global Architecture Dialog */}
       <ArchitectureDialog open={archOpen} onOpenChange={setArchOpen} />
 
-      {/* Global PDF Viewer Modal */}
-      <Dialog open={!!pdfSource} onOpenChange={(open) => !open && setPdfSource(null)}>
-        <DialogContent className="max-w-4xl h-[90vh] p-0 overflow-hidden flex flex-col rounded-[3px] border border-[var(--panel-border)] bg-[var(--panel-bg)]">
-          <DialogTitle className="sr-only">PDF Viewer</DialogTitle>
-          <div className="flex-1 min-h-0 relative">
-            {pdfSource && (
-              <PdfViewer documentId={pdfSource.documentId} initialPage={pdfSource.pageNumber || 1} />
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* Global Document Viewer Modal */}
+      {(() => {
+        const currentDoc = activeDocument || pdfSource;
+        const handleCloseDoc = () => {
+          if (setActiveDocument) setActiveDocument(null);
+          if (setPdfSource) setPdfSource(null);
+        };
+        return (
+          <Dialog open={!!currentDoc} onOpenChange={(open) => !open && handleCloseDoc()}>
+            <DialogContent className="max-w-4xl h-[90vh] p-0 overflow-hidden flex flex-col rounded-[3px] border border-[var(--panel-border)] bg-[var(--panel-bg)]">
+              <DialogTitle className="sr-only">Document Viewer</DialogTitle>
+              <div className="flex-1 min-h-0 relative">
+                {currentDoc && (
+                  <DocumentViewer
+                    document={currentDoc}
+                    onClose={handleCloseDoc}
+                    initialPage={currentDoc.pageNumber || 1}
+                    initialSection={currentDoc.section || ""}
+                  />
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
     </div>
   );
 }

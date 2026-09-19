@@ -24,6 +24,11 @@ export async function apiFetch(path, options = {}) {
         headers,
     });
 
+    // Automatically recover from expired/invalid tokens by switching to guest session
+    if (res.status === 401 && token) {
+        useAuthStore.getState().logout();
+    }
+
     // Capture server-issued guest session ID if unauthenticated
     const serverSessionId = res.headers.get("X-Session-ID");
     if (serverSessionId && !token && serverSessionId !== sessionId) {
