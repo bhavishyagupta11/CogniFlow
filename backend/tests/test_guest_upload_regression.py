@@ -102,13 +102,16 @@ def test_guest_pdf_upload_zero_leakage_and_viewing():
         )
 
         # 3. Assert upload succeeds
-        assert upload_res.status_code in [200, 201], f"Upload failed: {upload_res.text}"
+        assert upload_res.status_code in [200, 201, 202], f"Upload failed: {upload_res.text}"
         doc_data = upload_res.json()
         assert doc_data.get("ok") is True
         doc_id = doc_data["document"]["id"]
 
+        # Wait for background ingestion to complete so chunks are populated
+        from conftest import wait_for_guest_document_ready
+        guest_doc = wait_for_guest_document_ready(session_id, doc_id, timeout_secs=30)
+
         # 4. Assert document appears in GuestSessionService with raw_bytes
-        guest_doc = guest_session_service.get_document(session_id, doc_id)
         assert guest_doc is not None
         assert "raw_bytes" in guest_doc
         assert guest_doc["raw_bytes"].startswith(b"%PDF-")
@@ -180,7 +183,7 @@ def test_authenticated_upload_still_succeeds_with_durable_storage():
             headers={"Authorization": f"Bearer {token}"},
             files={"file": ("auth_blueprint.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
         )
-        assert upload_res.status_code in [200, 201]
+        assert upload_res.status_code in [200, 201, 202]
         doc_id = upload_res.json()["document"]["id"]
 
         # Assert R2 was called for authenticated user (at least upload + extracted pages)
@@ -231,7 +234,7 @@ def test_encrypted_guest_pdf_flow():
         data={"password": password},
         files={"file": ("vault.pdf", io.BytesIO(enc_bytes), "application/pdf")}
     )
-    assert res_correct_pw.status_code in [200, 201]
+    assert res_correct_pw.status_code in [200, 201, 202]
     doc_id = res_correct_pw.json()["document"]["id"]
 
     # Verify document in GuestSessionService

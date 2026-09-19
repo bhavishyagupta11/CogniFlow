@@ -5,15 +5,26 @@ Handles listing, file ingestion (PyMuPDF), document deletion, and PDF serving.
 
 from typing import List, Optional, Union
 from pathlib import Path
-from fastapi import APIRouter, Header, HTTPException, UploadFile, File, Form, Response, Request, Query
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, UploadFile, File, Form, Response, Request, Query
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from backend.config import UPLOADS_DIR, EXTRACTED_DIR
-from backend.services.document_service import get_manifest, ingest_file, delete_document, reindex_document, inspect_document
+from backend.services.document_service import get_manifest, ingest_file, ingest_file_async, delete_document, reindex_document, inspect_document
 from backend.services.auth_service import resolve_caller_identity, get_optional_user
 from backend.rag.vector_store import vector_store
 
 router = APIRouter(tags=["documents"])
+
+
+def _run_coro(coro) -> None:
+    """
+    Sync wrapper that runs an async coroutine to completion.
+    Used as the BackgroundTasks callable since FastAPI runs background tasks
+    in a threadpool executor (not in the event loop), so we need asyncio.run().
+    """
+    import asyncio
+    asyncio.run(coro)
+
 
 
 @router.get("/api/documents")
@@ -118,6 +129,7 @@ async def get_document_by_id(
 @router.post("/api/documents/upload")
 async def upload_documents(
     response: Response,
+    background_tasks: BackgroundTasks,
     file: Union[UploadFile, List[UploadFile]] = File(...),
     password: Optional[str] = Form(None),
     x_document_password: Optional[str] = Header(None),
@@ -148,7 +160,7 @@ async def upload_documents(
     for f in file_list:
         try:
             content = await f.read()
-            res = await ingest_file(
+            res = await ingest_file_async(
                 file_bytes=content,
                 filename=f.filename or "uploaded_file.pdf",
                 mime_type=f.content_type or "application/pdf",
@@ -156,6 +168,13 @@ async def upload_documents(
                 is_authenticated=identity.is_authenticated,
                 password=doc_password
             )
+            # Register background coroutine with FastAPI BackgroundTasks
+            # (runs after response is sent; works in both ASGI and TestClient)
+            if res.get("ok") and "_background_coro" in res:
+                background_tasks.add_task(_run_coro, res.pop("_background_coro"))
+            elif "_background_coro" in res:
+                # discard unawaited coroutine to avoid RuntimeWarning
+                res.pop("_background_coro").close()
             results.append(res)
         except Exception as e:
             results.append({
@@ -198,11 +217,14 @@ async def upload_documents(
             )
 
         doc = first.get("document", {})
+        # Return 202 Accepted when document is queued for background processing
+        http_status = 202 if first.get("processing") else 200
         return JSONResponse(
-            status_code=200,
+            status_code=http_status,
             headers={"X-Session-ID": identity.session_id} if identity.session_id else None,
             content={
                 "ok": True,
+                "processing": first.get("processing", False),
                 "document": doc,
                 "results": results
             }

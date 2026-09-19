@@ -1,15 +1,22 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiFetch } from "./client";
+import { apiFetch, assertJsonResponse } from "./client";
 
 export const DOCUMENTS_QUERY_KEY = ["documents"];
 
 export async function fetchDocuments() {
     const res = await apiFetch("/api/documents");
+    // Guard: if Vercel SPA catch-all returns index.html, throw a clear error
+    assertJsonResponse(res);
     if (!res.ok) {
-        throw new Error(`Failed to fetch documents: ${res.statusText}`);
+        const errorData = await res.json().catch(() => ({}));
+        const msg = errorData.detail || errorData.error || `Failed to fetch documents (${res.status})`;
+        const err = new Error(msg);
+        err.status = res.status;
+        throw err;
     }
     return res.json();
 }
+
 
 export async function uploadDocument(file, options = {}) {
     const formData = new FormData();

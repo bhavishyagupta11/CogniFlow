@@ -93,7 +93,7 @@ def test_guest_upload_and_open_pdf_via_raw_and_pdf_endpoints():
         headers={"x-session-id": session_id},
         files={"file": ("guest_research.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
     )
-    assert upload_resp.status_code in [200, 201]
+    assert upload_resp.status_code in [200, 201, 202]
     doc_id = (upload_resp.json().get("document") or {}).get("id")
     assert doc_id is not None
 
@@ -141,7 +141,7 @@ def test_guest_a_cannot_open_guest_b_pdf():
         headers={"x-session-id": session_b},
         files={"file": ("b_notes.pdf", io.BytesIO(pdf_b), "application/pdf")}
     )
-    assert upload_resp.status_code in [200, 201]
+    assert upload_resp.status_code in [200, 201, 202]
     doc_b_id = (upload_resp.json().get("document") or {}).get("id")
     assert doc_b_id is not None
 
@@ -171,7 +171,7 @@ def test_arbitrary_or_forged_session_cannot_access_guest_pdf():
         headers={"x-session-id": legit_session},
         files={"file": ("secure_file.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
     )
-    assert upload_resp.status_code in [200, 201]
+    assert upload_resp.status_code in [200, 201, 202]
     doc_id = (upload_resp.json().get("document") or {}).get("id")
 
     # Attacker tries arbitrary session header
@@ -211,7 +211,7 @@ def test_authenticated_user_access_and_cross_user_isolation():
         headers={"Authorization": f"Bearer {token_alice}"},
         files={"file": ("alice_doc.pdf", io.BytesIO(pdf_alice), "application/pdf")}
     )
-    assert upload_resp.status_code in [200, 201]
+    assert upload_resp.status_code in [200, 201, 202]
     doc_alice_id = (upload_resp.json().get("document") or {}).get("id")
 
     # 7. Alice can open her PDF
@@ -259,7 +259,7 @@ def test_guest_pdf_remains_entirely_outside_r2_and_durable_db():
         headers={"x-session-id": session_id},
         files={"file": ("temporary_guest_file.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
     )
-    assert upload_resp.status_code in [200, 201]
+    assert upload_resp.status_code in [200, 201, 202]
     doc_id = (upload_resp.json().get("document") or {}).get("id")
 
     # Verify not written to SQLite documents table
@@ -289,7 +289,7 @@ def test_guest_pdf_can_still_be_queried_through_rag():
         headers={"x-session-id": session_id},
         files={"file": ("quantum_research.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
     )
-    assert upload_resp.status_code in [200, 201]
+    assert upload_resp.status_code in [200, 201, 202]
     doc_id = (upload_resp.json().get("document") or {}).get("id")
 
     # Search in vector store with guest owner_id
@@ -339,7 +339,7 @@ def test_password_protected_guest_pdf_upload_and_viewing():
         data={"password": pw},
         files={"file": ("vault.pdf", io.BytesIO(enc_pdf), "application/pdf")}
     )
-    assert resp_ok.status_code in [200, 201]
+    assert resp_ok.status_code in [200, 201, 202]
     doc_id = (resp_ok.json().get("document") or {}).get("id")
 
     # 4. Open the PDF -> must serve valid unlocked PDF bytes (can be parsed by fitz without password)
@@ -373,7 +373,7 @@ def test_guest_session_migration_rejects_old_guest_access():
         headers={"x-session-id": session_id},
         files={"file": ("migrated_doc.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
     )
-    assert upload_resp.status_code in [200, 201]
+    assert upload_resp.status_code in [200, 201, 202]
     doc_id = (upload_resp.json().get("document") or {}).get("id")
 
     # Guest can view before migration
@@ -430,7 +430,7 @@ def test_authenticated_r2_behavior_preserved():
         headers={"Authorization": f"Bearer {token}"},
         files={"file": ("durable_file.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
     )
-    assert upload_resp.status_code in [200, 201]
+    assert upload_resp.status_code in [200, 201, 202]
     doc_id = (upload_resp.json().get("document") or {}).get("id")
 
     resp = client.get(f"/api/documents/{doc_id}/raw", headers={"Authorization": f"Bearer {token}"}, follow_redirects=False)
@@ -462,7 +462,7 @@ def test_http_range_request_support():
         headers={"x-session-id": session_id},
         files={"file": ("range_test.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
     )
-    assert upload_resp.status_code in [200, 201]
+    assert upload_resp.status_code in [200, 201, 202]
     doc_id = (upload_resp.json().get("document") or {}).get("id")
 
     # 1. Partial content range: bytes=0-100
@@ -523,7 +523,7 @@ def test_guest_pdf_conditional_request_and_cache_control_never_returns_304():
         headers={"x-session-id": session_a},
         files={"file": ("guest_research.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
     )
-    assert upload_res.status_code in [200, 201]
+    assert upload_res.status_code in [200, 201, 202]
     doc_id = upload_res.json()["document"]["id"]
 
     # Test 1: Normal request with no conditional headers
@@ -606,7 +606,7 @@ def test_guest_pdf_conditional_request_and_cache_control_never_returns_304():
         headers={"Authorization": f"Bearer {token}"},
         files={"file": ("auth_r2.pdf", io.BytesIO(pdf_bytes), "application/pdf")}
     )
-    assert auth_upload.status_code in [200, 201]
+    assert auth_upload.status_code in [200, 201, 202]
     auth_doc_id = auth_upload.json()["document"]["id"]
 
     auth_view = client.get(

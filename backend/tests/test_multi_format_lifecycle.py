@@ -28,6 +28,7 @@ from backend.rag.summarizer import hierarchical_summarize_document
 from backend.services.db_service import get_db_connection, create_user
 from backend.services.auth_service import hash_password, create_access_token
 from backend.services.storage_service import storage_service, R2StorageService
+from conftest import wait_for_document_ready
 
 client = TestClient(app)
 
@@ -159,8 +160,11 @@ def test_duplicate_document_rejection(auth_user):
         headers=auth_user["headers"],
         files={"file": (filename, txt_bytes, "text/plain")}
     )
-    assert res1.status_code == 200, f"Initial upload failed: {res1.text}"
+    assert res1.status_code in [200, 201, 202], f"Initial upload failed: {res1.text}"
     doc_id = res1.json().get("id") or (res1.json().get("document") or {}).get("id")
+    # Wait for background processing to register the hash in the DB
+    # so that the duplicate check on the second upload will find it.
+    wait_for_document_ready(doc_id, owner_id=auth_user["id"], timeout_secs=30, require_chunks=False)
 
     try:
         # Second upload with identical content under different filename
@@ -189,8 +193,10 @@ def test_document_api_endpoints_and_content(auth_user):
         headers=auth_user["headers"],
         files={"file": (filename, md_bytes, "text/markdown")}
     )
-    assert res.status_code == 200
+    assert res.status_code in [200, 201, 202]
     doc_id = res.json().get("id") or (res.json().get("document") or {}).get("id")
+    # Wait for background processing so content/raw endpoints return completed data
+    wait_for_document_ready(doc_id, owner_id=auth_user["id"], timeout_secs=30, require_chunks=False)
 
     try:
         # 1. GET /api/documents/{id}
@@ -235,7 +241,7 @@ def test_multi_format_vector_search(auth_user):
         headers=auth_user["headers"],
         files={"file": ("arch.docx", docx_bytes, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
     )
-    assert r1.status_code == 200, f"Upload arch.docx failed: {r1.text}"
+    assert r1.status_code in [200, 201, 202], f"Upload arch.docx failed: {r1.text}"
     d1_id = r1.json().get("id") or (r1.json().get("document") or {}).get("id")
 
     r2 = client.post(
@@ -243,8 +249,12 @@ def test_multi_format_vector_search(auth_user):
         headers=auth_user["headers"],
         files={"file": ("heaps.txt", txt_bytes, "text/plain")}
     )
-    assert r2.status_code == 200, f"Upload heaps.txt failed: {r2.text}"
+    assert r2.status_code in [200, 201, 202], f"Upload heaps.txt failed: {r2.text}"
     d2_id = r2.json().get("id") or (r2.json().get("document") or {}).get("id")
+
+    # Wait for both documents to be indexed before running vector search
+    wait_for_document_ready(d1_id, owner_id=auth_user["id"], timeout_secs=60)
+    wait_for_document_ready(d2_id, owner_id=auth_user["id"], timeout_secs=60)
 
     try:
         # Search for architecture specs from DOCX

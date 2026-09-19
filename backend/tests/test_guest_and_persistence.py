@@ -171,7 +171,7 @@ def test_guest_session_document_upload_and_strict_isolation():
         headers={"x-session-id": session_a},
         files={"file": ("guest_a_notes.txt", io.BytesIO(file_content), "text/plain")}
     )
-    assert upload_resp.status_code in [200, 201]
+    assert upload_resp.status_code in [200, 201, 202]
     doc_data = upload_resp.json().get("document") or upload_resp.json().get("documents", [{}])[0]
     doc_id = doc_data.get("id") or doc_data.get("document_id")
     assert doc_id is not None
@@ -389,7 +389,7 @@ def test_encrypted_pdf_correct_password_succeeds_and_does_not_persist_password()
         data={"password": correct_pw},
         files={"file": ("protected_memo.pdf", io.BytesIO(encrypted_bytes), "application/pdf")}
     )
-    assert resp.status_code in [200, 201]
+    assert resp.status_code in [200, 201, 202]
     res_data = resp.json()
     assert res_data.get("ok") is True
 

@@ -64,7 +64,7 @@ def upload_content_doc(owner_id: str, filename: str, content: str):
     if resp.status_code == 409:
         err = resp.json().get("error", {})
         return err.get("existingId")
-    assert resp.status_code in [200, 201], f"Failed to upload test doc: {resp.text}"
+    assert resp.status_code in [200, 201, 202], f"Failed to upload test doc: {resp.text}"
     data = resp.json()
     doc_id = (data.get("document") or {}).get("id") or (data.get("documents") or [{}])[0].get("id") or data.get("id")
     return doc_id
@@ -297,7 +297,7 @@ def test_guest_session_source_attachment_and_isolation():
         files={"file": ("guest_scoped.txt", io.BytesIO(txt_bytes), "text/plain")},
         headers=guest_headers
     )
-    assert upload_resp.status_code in [200, 201]
+    assert upload_resp.status_code in [200, 201, 202]
     doc_data = upload_resp.json().get("document") or upload_resp.json().get("documents", [{}])[0]
     doc_id = doc_data["id"]
 

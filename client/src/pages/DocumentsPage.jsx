@@ -18,7 +18,7 @@ export function DocumentsPage() {
     const fileInputRef = useRef(null);
     const { setPdfSource, setActiveDocument } = useUIStore();
     const { attachSource, detachSource, attachedSources = [] } = useChatStore();
-    const { data: documents = [], isLoading, refetch, isFetching } = useDocumentsQuery();
+    const { data: documents = [], isLoading, isError, error, refetch, isFetching } = useDocumentsQuery();
     const uploadMutation = useUploadDocumentMutation();
     const deleteMutation = useDeleteDocumentMutation();
     const reindexMutation = useReindexDocumentMutation();
@@ -294,6 +294,26 @@ export function DocumentsPage() {
                   <TableCell colSpan={8} className="text-center py-8 font-mono text-xs text-[var(--text-muted)]">
                     <Loader2 className="h-5 w-5 animate-spin mx-auto mb-2 text-[var(--accent-amber)]"/>
                     LOADING_DOCUMENTS...
+                  </TableCell>
+                </TableRow>
+              ) : isError ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="py-8">
+                    <div className="flex flex-col items-center gap-3 font-mono text-xs text-center">
+                      <AlertCircle className="h-6 w-6 text-rose-500" />
+                      <span className="font-bold text-rose-500 uppercase tracking-wider">API Error — Cannot Load Documents</span>
+                      <span className="text-[var(--text-muted)] max-w-md">
+                        {error?.name === "ApiConfigError"
+                          ? "Backend URL not configured. Set VITE_API_BASE_URL in Vercel environment variables."
+                          : (error?.message || "Unknown error fetching documents.")}
+                      </span>
+                      <button
+                        onClick={() => refetch()}
+                        className="mt-1 px-3 py-1.5 border border-rose-500/40 text-rose-500 rounded-[2px] hover:bg-rose-500/10 transition-colors text-[10px] font-mono uppercase tracking-wider"
+                      >
+                        RETRY
+                      </button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ) : documents.length === 0 ? (

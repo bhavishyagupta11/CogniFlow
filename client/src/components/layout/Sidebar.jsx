@@ -50,12 +50,21 @@ export function Sidebar({ isCollapsed, setIsCollapsed, isMobileOpen, setIsMobile
 
   const [searchQuery, setSearchQuery] = useState("");
   const [theme, setTheme] = useState(() => {
-    return document.documentElement.classList.contains("dark") ? "dark" : "light";
+    // Read from localStorage (single source of truth, synced with index.html inline script).
+    // Falls back to reading the DOM class (in case localStorage is blocked).
+    try {
+      return localStorage.getItem("cogniflow-theme") || "dark";
+    } catch {
+      return document.documentElement.classList.contains("dark") ? "dark" : "light";
+    }
   });
 
   const toggleTheme = () => {
     const nextTheme = theme === "light" ? "dark" : "light";
     setTheme(nextTheme);
+    try {
+      localStorage.setItem("cogniflow-theme", nextTheme);
+    } catch { /* localStorage blocked — fail silently */ }
     if (nextTheme === "dark") {
       document.documentElement.classList.add("dark");
       document.documentElement.setAttribute("data-theme", "dark");
@@ -64,6 +73,7 @@ export function Sidebar({ isCollapsed, setIsCollapsed, isMobileOpen, setIsMobile
       document.documentElement.setAttribute("data-theme", "light");
     }
   };
+
 
   const handleNewMission = () => {
     createNewMission();

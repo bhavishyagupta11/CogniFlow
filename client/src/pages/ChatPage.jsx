@@ -114,7 +114,7 @@ export function ChatPage() {
 
   const { setPdfSource, traceOpen, setTraceOpen } = useUIStore();
   const { user, userId, isAuthenticated } = useAuthStore();
-  const { data: documents } = useDocumentsQuery();
+  const { data: documents, isError: docsIsError, error: docsError } = useDocumentsQuery();
   const uploadMutation = useUploadDocumentMutation();
   const [autoFollow, setAutoFollow] = useState(true);
   const autoFollowRef = useRef(true);
@@ -1197,7 +1197,16 @@ export function ChatPage() {
 
             {/* Document List */}
             <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
-              {!documents || documents.length === 0 ? (
+              {docsIsError ? (
+                <div className="flex flex-col items-center gap-2 py-6 text-center">
+                  <span className="text-[10px] font-mono text-rose-500 font-bold uppercase tracking-wider">API Error — Cannot Load Documents</span>
+                  <span className="text-[10px] font-mono text-[var(--text-muted)] max-w-xs">
+                    {docsError?.name === "ApiConfigError"
+                      ? "Backend URL not configured. Set VITE_API_BASE_URL."
+                      : (docsError?.message || "Failed to connect to API.")}
+                  </span>
+                </div>
+              ) : !documents || documents.length === 0 ? (
                 <div className="text-center py-6 text-xs text-[var(--text-muted)]">
                   No documents in your library yet. Upload a document to attach it.
                 </div>

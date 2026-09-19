@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>CogniFlow — Evidence-Grounded Multi-Agent RAG Platform</title>
+    <title>CogniFlow - Evidence-Grounded Multi-Agent RAG Platform</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -13,6 +13,23 @@
       href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"
       crossorigin="anonymous"
     />
+    <!--
+      Theme initialization: runs synchronously before React hydration to
+      eliminate the flash of wrong theme on page refresh.
+      Reads localStorage["cogniflow-theme"]; defaults to "dark".
+    -->
+    <script>
+      try {
+        var _t = localStorage.getItem("cogniflow-theme") || "dark";
+        if (_t === "dark") {
+          document.documentElement.classList.add("dark");
+          document.documentElement.setAttribute("data-theme", "dark");
+        } else {
+          document.documentElement.classList.remove("dark");
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+      } catch (e) { /* localStorage blocked (private browsing, CSP) — fail silently */ }
+    </script>
   </head>
   <body class="bg-background text-foreground antialiased selection:bg-primary/20 selection:text-primary">
     <div id="root"></div>

@@ -23,7 +23,7 @@ from backend.rag.chunker import chunk_text, semantic_chunk_document
 
 class VectorStore:
     def __init__(self):
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._manifest_mtime: float = 0.0
         self.chunks: List[Dict[str, Any]] = []
         self.doc_freq: Counter = Counter()

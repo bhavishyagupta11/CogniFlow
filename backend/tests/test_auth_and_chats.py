@@ -18,8 +18,20 @@ def setup_database():
     init_db()
     from backend.services.db_service import get_db_connection
     with get_db_connection() as conn:
-        conn.execute("DELETE FROM messages WHERE user_id LIKE '%test%' OR user_id LIKE '%iso%' OR user_id LIKE 'user_%'")
-        conn.execute("DELETE FROM conversations WHERE user_id LIKE '%test%' OR user_id LIKE '%iso%' OR user_id LIKE 'user_%'")
+        # Delete test data by email domain to handle both predictable and UUID user IDs.
+        # Using subquery to get user IDs first, then cascade delete related data.
+        conn.execute("""
+            DELETE FROM messages WHERE conversation_id IN (
+                SELECT id FROM conversations WHERE user_id IN (
+                    SELECT id FROM users WHERE email LIKE '%@cogniflow.test'
+                )
+            )
+        """)
+        conn.execute("""
+            DELETE FROM conversations WHERE user_id IN (
+                SELECT id FROM users WHERE email LIKE '%@cogniflow.test'
+            )
+        """)
         conn.execute("DELETE FROM users WHERE email LIKE '%@cogniflow.test'")
 
 

@@ -887,3 +887,571 @@ def reindex_document(
         "doc_id": doc_id,
         "chunks_indexed": len([c for c in vector_store.chunks if c.get("document_id") == doc_id])
     }
+
+
+# ---------------------------------------------------------------------------
+# PHASE 6+7: Async ingestion — fast path + background RAG processing
+# ---------------------------------------------------------------------------
+
+async def _ingest_background(
+    doc_id: str,
+    safe_filename: str,
+    ext: str,
+    mime_type: str,
+    unlocked_bytes: bytes,
+    pages: List[Dict[str, Any]],
+    owner_id: str,
+    is_authenticated: bool,
+    r2_upload_key: str,
+    r2_extracted_key: str,
+    new_entry: Dict[str, Any],
+) -> None:
+    """
+    Background task: chunk, embed, index, persist, smoke-test.
+    Updates the document record to 'completed' or 'failed'.
+    Called via asyncio.create_task(); never awaited by the upload endpoint.
+    """
+    import asyncio
+
+    async def _mark_failed(reason: str) -> None:
+        """Update document status to 'failed' in DB and manifest."""
+        try:
+            from backend.services.db_service import db_service
+            db_service.update_document_status(doc_id, "failed", "failed")
+        except Exception:
+            pass
+        try:
+            manifest = get_manifest()
+            for m in manifest:
+                if m.get("id") == doc_id or m.get("document_id") == doc_id:
+                    m["status"] = "failed"
+                    m["processingStatus"] = "failed"
+                    m["processing_status"] = "failed"
+                    m["indexStatus"] = "failed"
+                    m["index_status"] = "failed"
+                    m["indexed"] = False
+                    m["failureReason"] = reason
+            save_manifest(manifest)
+        except Exception:
+            pass
+        logger.error(f"[IngestBg] Document {doc_id} marked FAILED: {reason}")
+
+    try:
+        t0 = time.time()
+
+        # ── Step B1: Semantic chunking ────────────────────────────────────
+        # Run in executor to avoid blocking the event loop
+        loop = asyncio.get_event_loop()
+        semantic_chunks = await loop.run_in_executor(
+            None, semantic_chunk_document, pages, doc_id, safe_filename
+        )
+        total_chunks = len(semantic_chunks)
+        chunk_ids = [c["chunk_id"] for c in semantic_chunks]
+
+        if total_chunks == 0:
+            await _mark_failed("NO_CHUNKS_PRODUCED: Text extraction produced no indexable chunks.")
+            return
+
+        t1 = time.time()
+        logger.info(f"[IngestBg] {doc_id} chunked in {int((t1 - t0) * 1000)}ms → {total_chunks} chunks")
+
+        # ── Step B2: Persist raw storage (R2 + local disk) ───────────────
+        if is_authenticated:
+            from backend.services.storage_service import storage_service
+            try:
+                await loop.run_in_executor(
+                    None,
+                    lambda: storage_service.put_object(
+                        r2_upload_key, unlocked_bytes,
+                        content_type=mime_type or ("application/pdf" if ext == ".pdf" else "text/plain")
+                    )
+                )
+            except Exception as e:
+                logger.warning(f"[IngestBg] R2 upload warning for {doc_id}: {e}")
+
+            stored_filename = new_entry["filename"]
+            stored_path = UPLOADS_DIR / stored_filename
+            try:
+                await loop.run_in_executor(None, stored_path.write_bytes, unlocked_bytes)
+            except Exception as e:
+                logger.warning(f"[IngestBg] Local file write warning for {doc_id}: {e}")
+
+            extracted_json_bytes = json.dumps(pages, indent=2).encode("utf-8")
+            try:
+                await loop.run_in_executor(
+                    None,
+                    lambda: storage_service.put_object(r2_extracted_key, extracted_json_bytes, content_type="application/json")
+                )
+            except Exception:
+                pass
+
+            extracted_path = EXTRACTED_DIR / f"{doc_id}.json"
+            try:
+                await loop.run_in_executor(
+                    None,
+                    lambda: extracted_path.write_text(json.dumps(pages, indent=2), encoding="utf-8")
+                )
+            except Exception:
+                pass
+
+        t2 = time.time()
+        logger.info(f"[IngestBg] {doc_id} stored in {int((t2 - t1) * 1000)}ms")
+
+        # ── Step B3: DB chunks + update entry to 'completed' ─────────────
+        if is_authenticated:
+            try:
+                from backend.services.db_service import db_service
+                await loop.run_in_executor(None, db_service.save_chunks, doc_id, semantic_chunks)
+            except Exception as e:
+                logger.warning(f"[IngestBg] DB chunk save warning for {doc_id}: {e}")
+
+        # ── Step B4: Vector store insertion ──────────────────────────────
+        index_before = len(vector_store.chunks)
+        await loop.run_in_executor(
+            None, vector_store.add_document, doc_id, safe_filename, pages, owner_id
+        )
+        index_after = len(vector_store.chunks)
+
+        t3 = time.time()
+        logger.info(f"[IngestBg] {doc_id} indexed in {int((t3 - t2) * 1000)}ms → {index_after - index_before} new chunks")
+
+        # ── Step B5: Smoke test ───────────────────────────────────────────
+        import re
+        first_page_text = pages[0].get("text", "") if pages else ""
+        tokens = re.findall(r"\b[a-zA-Z0-9_]{2,}\b", first_page_text)
+        smoke_query = " ".join(tokens[:6]) if tokens else (
+            " ".join(re.findall(r"\b[a-zA-Z0-9_]{2,}\b", " ".join(p.get("text", "") for p in pages))[:6])
+            or safe_filename
+        )
+        smoke_candidates = vector_store.search(
+            query=smoke_query, k=1, owner_id=owner_id, document_id=doc_id, scope="DOCUMENT"
+        )
+        smoke_passed = any(
+            (c.get("document_id") == doc_id or c.get("documentId") == doc_id)
+            for c in smoke_candidates
+        )
+        if not smoke_passed:
+            # Roll back vector store and storage; mark failed
+            vector_store.remove_document(doc_id)
+            if is_authenticated:
+                _manifest = get_manifest()
+                save_manifest([m for m in _manifest if m.get("id") != doc_id])
+                try:
+                    from backend.services.db_service import db_service
+                    db_service.delete_document(doc_id)
+                except Exception:
+                    pass
+            else:
+                try:
+                    from backend.services.guest_session_service import guest_session_service
+                    guest_session_service.delete_document(owner_id, doc_id)
+                except Exception:
+                    pass
+            await _mark_failed("SMOKE_TEST_FAILED: Document indexed but retrieval validation failed.")
+            return
+
+        # ── Step B6: Mark completed ───────────────────────────────────────
+        total_text_len = sum(len(p.get("text", "").strip()) for p in pages)
+
+        completed_fields = {
+            "status": "completed",
+            "processingStatus": "completed",
+            "processing_status": "completed",
+            "indexStatus": "indexed",
+            "index_status": "indexed",
+            "indexed": True,
+            "chunkCount": total_chunks,
+            "chunk_count": total_chunks,
+            "chunkIds": chunk_ids,
+            "indexVersion": vector_store.index_version,
+            "index_version": vector_store.index_version,
+        }
+
+        # Update DB status
+        if is_authenticated:
+            try:
+                from backend.services.db_service import db_service
+                db_service.update_document_status(doc_id, "completed", "indexed")
+            except Exception as e:
+                logger.warning(f"[IngestBg] DB status update warning for {doc_id}: {e}")
+
+        # Update manifest
+        try:
+            manifest = get_manifest()
+            for m in manifest:
+                if m.get("id") == doc_id or m.get("document_id") == doc_id:
+                    m.update(completed_fields)
+            save_manifest(manifest)
+        except Exception as e:
+            logger.warning(f"[IngestBg] Manifest update warning for {doc_id}: {e}")
+
+        # Update guest session entry with completed status AND actual chunks
+        if not is_authenticated:
+            try:
+                from backend.services.guest_session_service import guest_session_service
+                doc = guest_session_service.get_document(owner_id, doc_id)
+                if doc:
+                    doc.update(completed_fields)
+                    # Persist the actual chunk dicts so callers can access them
+                    doc["chunks"] = semantic_chunks
+            except Exception:
+                pass
+
+        t4 = time.time()
+        logger.info(f"[IngestBg] {doc_id} COMPLETED in {int((t4 - t0) * 1000)}ms total background time")
+
+        # ── Step B7: Background document summary precomputation ───────────
+        try:
+            from backend.rag.summarizer import schedule_document_summary_precomputation
+            schedule_document_summary_precomputation(doc_id, new_entry, pages)
+        except Exception as e:
+            logger.debug(f"[IngestBg] Summary precomputation scheduling: {e}")
+
+        log_upload_summary(
+            doc_id=doc_id,
+            filename=safe_filename,
+            page_count=len(pages),
+            char_count=total_text_len,
+            chunk_count=total_chunks,
+            index_before=index_before,
+            index_after=index_after,
+            duration_ms=int((t4 - t0) * 1000),
+            status="indexed"
+        )
+
+    except Exception as exc:
+        logger.error(f"[IngestBg] Unhandled exception for {doc_id}: {exc}", exc_info=True)
+        await _mark_failed(f"INTERNAL_ERROR: {str(exc)}")
+
+
+async def ingest_file_async(
+    file_bytes: bytes,
+    filename: str,
+    mime_type: str,
+    owner_id: str = "dev-user",
+    is_authenticated: bool = True,
+    password: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Two-phase async ingestion:
+
+    FAST PATH (returns in ~1-3s):
+      1. Validate size, extension, filename traversal
+      2. Compute SHA-256 and check duplicate
+      3. Extract text (CPU-bound, but unavoidable before dedup and validation)
+      4. Validate non-empty text
+      5. Write a 'processing' record to DB + manifest
+      6. Return { status: 'processing', document: {...} }
+
+    BACKGROUND TASK (fires asyncio.create_task, runs ~5-120s):
+      B1. Semantic chunking
+      B2. Persist raw bytes to R2 + local disk
+      B3. Save chunks to DB
+      B4. Add to in-memory vector store
+      B5. Smoke test retrieval
+      B6. Mark document 'completed'
+      B7. Schedule summary precomputation
+
+    The client should poll GET /api/documents or use the WebSocket event
+    to learn when processingStatus transitions to 'completed'.
+    """
+    import asyncio
+
+    start_time = time.time()
+
+    # ── FAST PATH: Steps 1-4 (identical validation logic to ingest_file) ──
+
+    # 1. Sanitize filename & validate extension
+    safe_filename = Path(filename).name
+    if not safe_filename:
+        safe_filename = "document.pdf"
+
+    ext = Path(safe_filename).suffix.lower()
+    allowed_exts = [".pdf", ".docx", ".txt", ".md"]
+    if ext == ".doc":
+        return {
+            "ok": False,
+            "status": 400,
+            "error": {
+                "code": "UNSUPPORTED_FORMAT",
+                "message": "Legacy binary .doc files are not supported. Please save or convert your document to modern .docx format before uploading.",
+                "filename": safe_filename,
+                "field": "file"
+            }
+        }
+    if ext not in allowed_exts:
+        return {
+            "ok": False,
+            "status": 400,
+            "error": {
+                "code": "UNSUPPORTED_FORMAT",
+                "message": f"File extension '{ext}' is not supported. Supported formats: .pdf, .docx, .txt, .md.",
+                "filename": safe_filename,
+                "field": "file"
+            }
+        }
+
+    # 2. Check file size
+    max_bytes = 25 * 1024 * 1024
+    if len(file_bytes) > max_bytes:
+        return {
+            "ok": False,
+            "status": 413,
+            "error": {
+                "code": "FILE_TOO_LARGE",
+                "message": f"File size ({len(file_bytes)} bytes) exceeds the 25MB maximum limit.",
+                "filename": safe_filename,
+                "field": "file"
+            }
+        }
+
+    if len(file_bytes) == 0:
+        return {
+            "ok": False,
+            "status": 400,
+            "error": {
+                "code": "EMPTY_FILE",
+                "message": "Uploaded file is 0 bytes.",
+                "filename": safe_filename,
+                "field": "file"
+            }
+        }
+
+    # 3. Compute SHA-256 and check for duplicate
+    file_hash = compute_sha256(file_bytes)
+    existing = None
+    if is_authenticated:
+        try:
+            from backend.services.db_service import db_service
+            existing = db_service.get_document_by_hash(file_hash, owner_id)
+        except Exception:
+            existing = None
+
+        if not existing:
+            manifest = get_manifest()
+            existing = next(
+                (m for m in manifest if m.get("hash") == file_hash and (m.get("ownerId") == owner_id or m.get("owner_id") == owner_id)),
+                None
+            )
+    else:
+        from backend.services.guest_session_service import guest_session_service
+        session_docs = guest_session_service.get_documents(owner_id)
+        existing = next((d for d in session_docs if d.get("hash") == file_hash), None)
+
+    if existing:
+        existing_filename = existing.get("originalFilename") or existing.get("original_filename") or existing.get("filename") or "document"
+        if existing_filename and existing_filename.strip().lower() != safe_filename.strip().lower():
+            dup_msg = f"This file has already been uploaded as '{existing_filename}'."
+        else:
+            dup_msg = f"File '{safe_filename}' already exists in your knowledge base."
+        return {
+            "ok": False,
+            "status": 409,
+            "error": {
+                "code": "DUPLICATE",
+                "message": dup_msg,
+                "existingId": existing.get("id") or existing.get("document_id"),
+                "existingFilename": existing_filename,
+                "filename": safe_filename,
+                "field": "file"
+            }
+        }
+
+    # 4. Extract text & validate password BEFORE saving any files or DB records
+    pages: List[Dict[str, Any]] = []
+    unlocked_bytes = file_bytes
+    try:
+        loop = asyncio.get_event_loop()
+        pages, unlocked_bytes = await loop.run_in_executor(
+            None,
+            lambda: extract_document_content(
+                file_bytes=file_bytes,
+                filename=safe_filename,
+                mime_type=mime_type,
+                password=password
+            )
+        )
+    except PDFPasswordRequiredError as e:
+        return {
+            "ok": False,
+            "status": 401,
+            "error": {"code": "PASSWORD_REQUIRED", "message": str(e), "filename": safe_filename, "field": "password"}
+        }
+    except PDFIncorrectPasswordError as e:
+        return {
+            "ok": False,
+            "status": 401,
+            "error": {"code": "INCORRECT_PASSWORD", "message": str(e), "filename": safe_filename, "field": "password"}
+        }
+    except UnsupportedFormatError as e:
+        return {
+            "ok": False,
+            "status": 400,
+            "error": {"code": "UNSUPPORTED_FORMAT", "message": str(e), "filename": safe_filename, "field": "file"}
+        }
+    except Exception as e:
+        logger.error(f"[IngestAsync] Extraction failed for {safe_filename}: {e}")
+        return {
+            "ok": False,
+            "status": 422,
+            "error": {
+                "code": "EXTRACTION_FAILED",
+                "message": f"Failed to extract document content: {str(e)}",
+                "filename": safe_filename,
+                "field": "file"
+            }
+        }
+
+    # Validate usable text
+    total_text_len = sum(len(p.get("text", "").strip()) for p in pages)
+    if ext == ".pdf" and (total_text_len < 10 or len(pages) == 0):
+        return {
+            "ok": False,
+            "status": 422,
+            "error": {
+                "code": "OCR_REQUIRED",
+                "message": "PDF uploaded, but no selectable text was found. OCR is required.",
+                "filename": safe_filename,
+                "field": "file"
+            }
+        }
+    if total_text_len == 0 or len(pages) == 0:
+        return {
+            "ok": False,
+            "status": 422,
+            "error": {
+                "code": "EMPTY_OR_UNREADABLE",
+                "message": "Document contains no readable text or failed text extraction. It may be image-only or empty.",
+                "filename": safe_filename,
+                "field": "file"
+            }
+        }
+
+    fast_ms = int((time.time() - start_time) * 1000)
+    logger.info(f"[IngestAsync] {safe_filename} fast path complete in {fast_ms}ms ({len(pages)} pages, {total_text_len} chars)")
+
+    # ── 5. Create 'processing' document record ────────────────────────────
+
+    doc_id = str(uuid.uuid4())
+    stored_filename = f"{doc_id}{ext}"
+    r2_upload_key = f"uploads/{doc_id}/original"
+    r2_extracted_key = f"extracted/{doc_id}/pages.json"
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    resolved_mime = mime_type or (
+        "application/pdf" if ext == ".pdf"
+        else "application/vnd.openxmlformats-officedocument.wordprocessingml.document" if ext == ".docx"
+        else "text/markdown" if ext in [".md", ".markdown"]
+        else "text/plain"
+    )
+
+    new_entry: Dict[str, Any] = {
+        "schemaVersion": 2,
+        "id": doc_id,
+        "document_id": doc_id,
+        "filename": stored_filename,
+        "storage_filename": stored_filename,
+        "originalFilename": safe_filename,
+        "original_filename": safe_filename,
+        "mimeType": resolved_mime,
+        "mime_type": resolved_mime,
+        "extension": ext,
+        "size": len(file_bytes),
+        "sizeBytes": len(file_bytes),
+        "size_bytes": len(file_bytes),
+        "uploadedAt": now_iso,
+        "created_at": now_iso,
+        "createdAt": now_iso,
+        "lastModified": now_iso,
+        "updated_at": now_iso,
+        "pageCount": len(pages) if ext == ".pdf" else max(len(pages), 1),
+        "page_count": len(pages) if ext == ".pdf" else max(len(pages), 1),
+        "characterCount": total_text_len,
+        "charCount": total_text_len,
+        "char_count": total_text_len,
+        "extractedCharCount": total_text_len,
+        "extracted_char_count": total_text_len,
+        # Chunk fields will be filled in by background task
+        "chunkCount": 0,
+        "chunk_count": 0,
+        "chunkIds": [],
+        # Status: processing until background task completes
+        "status": "processing",
+        "processingStatus": "processing",
+        "processing_status": "processing",
+        "indexStatus": "processing",
+        "index_status": "processing",
+        "indexed": False,
+        "indexVersion": vector_store.index_version,
+        "index_version": vector_store.index_version,
+        "ownerId": owner_id,
+        "owner_id": owner_id,
+        "tenantId": owner_id,
+        "tenant_id": owner_id,
+        "hash": file_hash,
+        "fileHash": file_hash,
+        "file_hash": file_hash,
+        "r2_upload_key": r2_upload_key if is_authenticated else None,
+        "r2_extracted_key": r2_extracted_key if is_authenticated else None,
+        "lifecycle_state": "ACTIVE",
+        "indexInsertionStatus": "processing",
+        "index_insertion_status": "processing",
+    }
+
+    # Persist the 'processing' record immediately so the client can see it
+    if is_authenticated:
+        try:
+            from backend.services.db_service import db_service
+            db_service.create_document(new_entry)
+        except Exception as e:
+            logger.warning(f"[IngestAsync] DB create_document warning for {doc_id}: {e}")
+
+        try:
+            manifest = get_manifest()
+            manifest = [m for m in manifest if m.get("id") != doc_id]
+            manifest.append(new_entry)
+            save_manifest(manifest)
+        except Exception as e:
+            logger.warning(f"[IngestAsync] Manifest save warning for {doc_id}: {e}")
+    else:
+        # Guest: register in-memory record immediately (without chunks/raw bytes — those come in bg task)
+        try:
+            from backend.services.guest_session_service import guest_session_service
+            guest_session_service.add_document(
+                session_id=owner_id,
+                doc_dict=new_entry,
+                pages=pages,
+                chunks=[],
+                raw_bytes=unlocked_bytes
+            )
+        except Exception as e:
+            logger.warning(f"[IngestAsync] Guest session add_document warning for {doc_id}: {e}")
+
+    # ── 6. Return background coroutine for the caller to schedule ────────────
+    # We return the coroutine instead of calling asyncio.create_task() here,
+    # so the upload endpoint can register it with FastAPI's BackgroundTasks.
+    # This ensures it runs reliably in both production (ASGI) and TestClient.
+    background_coro = _ingest_background(
+        doc_id=doc_id,
+        safe_filename=safe_filename,
+        ext=ext,
+        mime_type=resolved_mime,
+        unlocked_bytes=unlocked_bytes,
+        pages=pages,
+        owner_id=owner_id,
+        is_authenticated=is_authenticated,
+        r2_upload_key=r2_upload_key,
+        r2_extracted_key=r2_extracted_key,
+        new_entry=new_entry,
+    )
+
+    logger.info(f"[IngestAsync] {doc_id} ({safe_filename}) accepted in {fast_ms}ms — background task ready")
+
+    return {
+        "ok": True,
+        "success": True,
+        "status": 202,
+        "processing": True,
+        "document": new_entry,
+        "_background_coro": background_coro,
+    }
